@@ -202,8 +202,8 @@ class Simulation:
             # Check for visualization exit requests
             if self.viz and not self.viz.running:
                 # If user closes window during eval, stop the generation early
-                 print("Visualizer closed, ending generation early.")
-                 break
+                print("Visualizer closed, ending generation early.")
+                break
 
             # Update NNs and step physics
             current_active = 0
@@ -234,13 +234,20 @@ class Simulation:
 
             # Update visualization if attached
             if self.viz:
-                if not self.viz.draw(self):
-                    # Stop generation if visualizer quit
-                    active_genomes = 0 # Ensure loop terminates
-                    break 
+                viz_result = self.viz.draw(self)
+                if not viz_result:
+                    # Stop generation immediately if visualizer quit
+                    print("Visualizer signaled to stop immediately")
+                    # End the generation
+                    break
             
         # --- End of Generation Loop --- 
         print(f"Generation finished. Time: {time.time() - start_time:.2f}s. Active dummies remaining: {active_genomes}")
+
+        # If visualizer was closed, just return without calculating fitness
+        if self.viz and not self.viz.running:
+            print("Skipping fitness calculation as visualizer was closed")
+            return
 
         # Calculate fitness for all genomes in this generation
         for genome_id, genome in genomes:

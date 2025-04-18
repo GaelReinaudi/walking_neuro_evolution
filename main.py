@@ -19,6 +19,12 @@ WINNER_FILE = 'winner_genome.pkl'
 # We initialize them once to avoid recreating the Pygame window repeatedly
 simulation: Simulation | None = None
 visualizer = None
+visualizer_closed = False  # Flag to track if visualizer was closed by user
+
+# Custom exception for graceful termination
+class VisualizerClosedException(Exception):
+    """Raised when the user closes the visualizer window."""
+    pass
 
 def eval_genomes(genomes: list[tuple[int, neat.DefaultGenome]], config: neat.Config):
     """Evaluates the fitness of each genome in the current generation.
@@ -27,7 +33,15 @@ def eval_genomes(genomes: list[tuple[int, neat.DefaultGenome]], config: neat.Con
     (genome_id, genome) pairs and the NEAT config object.
     We run our simulation, calculate fitness, and assign it back to each genome.
     """
-    global simulation, visualizer, VISUALIZE
+    global simulation, visualizer, VISUALIZE, visualizer_closed
+
+    # --- Check for Early Exit ---
+    if visualizer_closed:
+        # If user has closed visualizer, terminate by setting minimal fitness
+        for _, genome in genomes:
+            genome.fitness = -1000
+        # This should exit quickly
+        return
 
     # --- Initialize Simulation and Visualizer (if first run) --- 
     if simulation is None:
@@ -59,10 +73,10 @@ def eval_genomes(genomes: list[tuple[int, neat.DefaultGenome]], config: neat.Con
     # Check if user quit the visualizer during the generation
     if VISUALIZE and visualizer and not visualizer.running:
          # Signal NEAT to terminate by raising an exception or using a global flag
-         # For simplicity, we can just let it proceed but subsequent calls will likely fail
          print("Visualizer quit, ending evolution run.")
-         # Optionally raise SystemExit or neat.CompleteExtinction to stop NEAT
-         # raise neat.CompleteExtinction()
+         visualizer_closed = True  # Set the flag so future calls will exit early
+         # Raise an exception to stop the current run
+         raise VisualizerClosedException("User closed the visualizer")
 
 
 def run_neat(config_file: str):
@@ -85,6 +99,13 @@ def run_neat(config_file: str):
     # Run for up to NUM_GENERATIONS generations.
     try:
         winner = p.run(eval_genomes, NUM_GENERATIONS)
+    except VisualizerClosedException as e:
+        print(f"NEAT run terminated early: {e}")
+        # Handle clean exit for visualizer closed case
+        if visualizer:
+             visualizer.close()
+        print("Application terminated by user.")
+        sys.exit(0)
     except Exception as e:
         print(f"NEAT run terminated early: {e}")
         # Handle potential early exit from visualizer quit
@@ -114,10 +135,13 @@ def run_neat(config_file: str):
     # neat.visualize.plot_species(stats, view=True)
     # neat.visualize.draw_net(config, winner, True)
 
+
 if __name__ == '__main__':
-    # Determine path to configuration file. This path manipulation is
-    # here so that the script will run successfully regardless of the
-    # current working directory.
-    local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config-feedforward.txt')
+    # Ensure the config path is correct before passing to neat
+    config_path = os.path.abspath(CONFIG_PATH)
+    if not os.path.exists(config_path):
+        print(f"Config file not found: {config_path}")
+        sys.exit(1)
+
+    print()
     run_neat(config_path) 
