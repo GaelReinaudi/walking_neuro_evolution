@@ -2,6 +2,8 @@
 
 import pymunk
 from dummy import Dummy
+# Import the neural network
+from neural_network import NeuralNetwork
 
 # Collision Types
 COLLISION_TYPE_DUMMY = 1
@@ -16,7 +18,7 @@ LASER_WIDTH = 5
 
 class Simulation:
     def __init__(self, gravity: tuple[float, float] = (0, -981.0)):
-        """Initializes the simulation space, gravity, ground, laser, and collision handler."""
+        """Initializes the simulation space, gravity, ground, laser, NN, and collision handler."""
         self.space = pymunk.Space()
         self.space.gravity = gravity
         self._add_ground()
@@ -24,9 +26,12 @@ class Simulation:
         self.laser_body: pymunk.Body | None = None
         self.laser_shape: pymunk.Shape | None = None
         self.dummy_is_dead = False # Flag for laser collision
+        # Instantiate the neural network
+        self.nn = NeuralNetwork() # Using default sensor/motor counts
 
         self._add_laser()
         self._setup_collision_handler()
+        # TODO: Add handler for dummy foot <-> ground contact
 
     def _add_ground(self) -> None:
         """Adds a static ground segment to the simulation space."""
@@ -65,6 +70,8 @@ class Simulation:
         """Sets up the handler to call _laser_hit_dummy when laser hits dummy."""
         handler = self.space.add_collision_handler(COLLISION_TYPE_LASER, COLLISION_TYPE_DUMMY)
         handler.begin = self._laser_hit_dummy
+        # TODO: Add handler for ground collisions (COLLISION_TYPE_GROUND, COLLISION_TYPE_DUMMY)
+        # to update dummy.r_foot_contact, dummy.l_foot_contact
 
     def add_dummy(self, position: tuple[float, float] = (100, 100)) -> Dummy:
         """Creates and adds a Dummy to the simulation.
@@ -85,17 +92,26 @@ class Simulation:
         return self.dummy
 
     def step(self, dt: float) -> None:
-        """Advances the simulation by one time step."""
-        # Only step if the dummy isn't dead (optional, could let physics run)
-        # if not self.dummy_is_dead:
-        self.space.step(dt)
+        """Advances the simulation by one time step, including NN activation."""
+        # Only update and step if the dummy isn't dead
+        if self.dummy and not self.dummy_is_dead:
+            # 1. Get sensor data from dummy
+            sensor_values = self.dummy.get_sensor_data()
+
+            # 2. Activate neural network
+            motor_outputs = self.nn.activate(sensor_values)
+
+            # 3. Apply motor outputs to dummy
+            self.dummy.set_motor_rates(motor_outputs)
+
+            # 4. Step physics
+            self.space.step(dt)
+        elif self.dummy_is_dead:
+            # If dead, maybe just step physics without NN update? (Optional)
+            self.space.step(dt) # Allow body to fall naturally after death
 
     def reset(self, dummy_start_pos: tuple[float, float]) -> None:
-        """Resets the simulation for a new run.
-
-        Removes the old dummy, resets the laser position and velocity,
-        resets the death flag, and adds a new dummy.
-        """
+        """Resets the simulation, including dummy, laser, and flags."""
         # Remove old dummy if it exists
         if self.dummy is not None:
             self.dummy.remove_from_space()
@@ -108,6 +124,9 @@ class Simulation:
 
         # Reset flags
         self.dummy_is_dead = False
+
+        # Reset NN state if needed (not for placeholder)
+        # self.nn.reset() # If the NN had internal state
 
         # Add new dummy
         self.add_dummy(dummy_start_pos)
