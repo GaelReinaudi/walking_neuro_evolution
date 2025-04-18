@@ -9,7 +9,8 @@ COLLISION_TYPE_LASER = 2
 COLLISION_TYPE_GROUND = 3
 
 LASER_SPEED = 25.0 # Pixels per second
-LASER_START_X = -100 # Start off-screen left
+# Adjust laser start X to be closer, e.g., just left of the typical screen view
+LASER_START_X = -20
 LASER_HEIGHT = 800 # Make it tall
 LASER_WIDTH = 5
 
@@ -88,6 +89,28 @@ class Simulation:
         # Only step if the dummy isn't dead (optional, could let physics run)
         # if not self.dummy_is_dead:
         self.space.step(dt)
+
+    def reset(self, dummy_start_pos: tuple[float, float]) -> None:
+        """Resets the simulation for a new run.
+
+        Removes the old dummy, resets the laser position and velocity,
+        resets the death flag, and adds a new dummy.
+        """
+        # Remove old dummy if it exists
+        if self.dummy is not None:
+            self.dummy.remove_from_space()
+            self.dummy = None
+
+        # Reset laser
+        if self.laser_body is not None:
+            self.laser_body.position = (LASER_START_X, LASER_HEIGHT / 2)
+            self.laser_body.velocity = (LASER_SPEED, 0)
+
+        # Reset flags
+        self.dummy_is_dead = False
+
+        # Add new dummy
+        self.add_dummy(dummy_start_pos)
 
     def get_fitness(self) -> float:
         """Calculates fitness based on the dummy's horizontal position.

@@ -104,6 +104,19 @@ class Dummy:
         self.shapes.append(shape)
         return body
 
+    def remove_from_space(self) -> None:
+        """Removes all bodies, shapes, and joints associated with this dummy from the space."""
+        for joint in self.joints:
+            self.space.remove(joint)
+        for shape in self.shapes:
+            self.space.remove(shape)
+        for body in self.bodies:
+            self.space.remove(body)
+        # Clear local lists
+        self.joints.clear()
+        self.shapes.clear()
+        self.bodies.clear()
+
     def get_body_position(self) -> Vec2d:
         """Returns the current position of the main body."""
         return self.body.position

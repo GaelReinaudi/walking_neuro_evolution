@@ -1,6 +1,7 @@
 # main.py
 import sys
 import os
+import time # For pausing after reset
 
 # Add src directory to Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
@@ -9,41 +10,67 @@ from simulation import Simulation
 from visualizer import Visualizer # Import the new Visualizer class
 
 DT = 1/60.0 # Physics timestep
+# Move dummy start pos further right
+DUMMY_START_POS = (250, 150)
 
 def main():
     print("Initializing simulation and visualizer...")
+    # Initialize simulation and visualizer ONCE
     sim = Simulation()
-    viz = Visualizer() # Initialize the visualizer
+    viz = Visualizer() # Uses new default height
 
-    print("Adding dummy...")
-    # Place the dummy slightly above the ground
-    dummy_start_pos = (100, 150)
-    sim.add_dummy(position=dummy_start_pos)
+    # Add the first dummy
+    print("Adding initial dummy...")
+    sim.add_dummy(position=DUMMY_START_POS)
+    generation = 1
 
-    print("Running simulation loop (Press ESC or close window to quit)...")
+    print("Starting simulation generations (Press ESC or close window to quit)...")
 
-    # Main simulation loop
+    # Outer loop for handling runs and resets
     while viz.running:
-        # Check if the dummy was hit by the laser in the previous step
-        if sim.dummy_is_dead:
-            print("Laser hit detected in main loop, stopping simulation.")
-            break # Exit loop
+        # Inner loop for a single simulation run (until death or quit)
+        run_active = True
+        while run_active and viz.running:
+            # Check for user quit first
+            # process_events is called within viz.draw, updating viz.running
+            if not viz.running:
+                break
 
-        # Step the physics simulation
-        sim.step(DT)
+            # Check if the dummy was hit by the laser
+            if sim.dummy_is_dead:
+                print(f"End of Generation {generation}. Dummy hit by laser.")
+                run_active = False # End this inner loop
+                break # Go to reset logic
 
-        # Draw the current state
-        # The draw method returns False if the user quits
-        if not viz.draw(sim.space):
-            break # Exit loop if visualization window is closed
+            # Step the physics simulation
+            sim.step(DT)
 
-    # --- Simulation finished --- 
-    fitness = sim.get_fitness()
-    print(f"\nSimulation loop ended.")
-    print(f"Dummy initial X: {dummy_start_pos[0]:.2f}")
-    if sim.dummy:
-         print(f"Dummy final X:   {sim.dummy.get_body_position().x:.2f}")
-    print(f"Fitness (Leftward distance): {fitness:.2f}")
+            # Draw the current state (also handles Pygame events)
+            # Pass the simulation object for camera focus
+            if not viz.draw(sim): # viz.draw now returns True if still running
+                run_active = False # End this inner loop if user quit
+                break # Go to outer loop check
+
+        # --- End of single run --- 
+
+        # If the visualizer is still running, calculate fitness and reset
+        if viz.running:
+            fitness = sim.get_fitness()
+            print(f"Generation {generation} Fitness: {fitness:.2f}")
+            if sim.dummy:
+                print(f"Final X position: {sim.dummy.get_body_position().x:.2f}")
+            
+            # Reset for the next generation
+            generation += 1
+            print(f"\nResetting for Generation {generation}...")
+            sim.reset(dummy_start_pos=DUMMY_START_POS)
+            time.sleep(0.5) # Brief pause to see the reset
+        else:
+            # Visualizer was closed, break outer loop
+            break
+
+    # --- Simulation ended (user quit) --- 
+    print("\nSimulation program finished.")
 
     # Clean up Pygame
     viz.close()

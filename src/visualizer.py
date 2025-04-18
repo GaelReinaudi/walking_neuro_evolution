@@ -1,9 +1,15 @@
 import pygame
 import pymunk
 import pymunk.pygame_util
+# Assuming simulation.py is in the same parent directory (src)
+from simulation import Simulation # Needed to access dummy position
+
+# Constants for camera
+CAMERA_Y_OFFSET = -50 # How much space below the ground (0) to show
+CAMERA_X_FOLLOW_FACTOR = 0.3 # Where the dummy should be horizontally (0=left, 0.5=center, 1=right)
 
 class Visualizer:
-    def __init__(self, width: int = 1200, height: int = 800, fps: int = 60):
+    def __init__(self, width: int = 1200, height: int = 350, fps: int = 60):
         """Initializes Pygame and sets up the display window."""
         pygame.init()
         self.screen = pygame.display.set_mode((width, height))
@@ -15,6 +21,8 @@ class Visualizer:
         self.width = width
         self.height = height
         self._running = True
+        self.camera_offset_x = 0
+        self.camera_offset_y = CAMERA_Y_OFFSET
 
     def process_events(self) -> None:
         """Handles Pygame events, like closing the window."""
@@ -24,11 +32,11 @@ class Visualizer:
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self._running = False
 
-    def draw(self, space: pymunk.Space) -> bool:
-        """Clears the screen, draws the Pymunk space, and updates the display.
+    def draw(self, sim: Simulation) -> bool:
+        """Clears the screen, updates camera, draws the Pymunk space, and updates the display.
 
         Args:
-            space: The Pymunk space object to draw.
+            sim: The Simulation object (contains space and dummy).
 
         Returns:
             False if the user quit, True otherwise.
@@ -37,13 +45,33 @@ class Visualizer:
         if not self._running:
             return False
 
+        # --- Update Camera --- 
+        # Follow the dummy horizontally
+        if sim.dummy:
+            target_x = sim.dummy.get_body_position().x - self.width * CAMERA_X_FOLLOW_FACTOR
+            # Simple lerp for smoother camera movement (optional)
+            # self.camera_offset_x = self.camera_offset_x * 0.95 + target_x * 0.05
+            self.camera_offset_x = target_x # Direct follow for now
+
+        # Fixed Y offset to keep ground visible
+        self.camera_offset_y = CAMERA_Y_OFFSET
+
+        # Create the transformation matrix
+        # Pymunk positive Y is up, Pygame positive Y is down.
+        # Pygame also draws from top-left. Pymunk default origin is bottom-left.
+        # Need translation AND scaling (to flip Y)
+        cam_transform = pymunk.Transform.translation(-self.camera_offset_x, -self.camera_offset_y)
+        # We handle the Y-flip later by flipping the final surface
+        self.draw_options.transform = cam_transform
+
+        # --- Draw --- 
         # Clear screen
         self.screen.fill(pygame.Color("lightblue"))
 
-        # Draw the space
-        space.debug_draw(self.draw_options)
+        # Draw the space using the updated transform
+        sim.space.debug_draw(self.draw_options)
 
-        # Flip screen vertically (Pygame Y is inverted)
+        # Flip screen vertically (Pygame Y is inverted relative to Pymunk)
         flipped_surface = pygame.transform.flip(self.screen, False, True)
         self.screen.blit(flipped_surface, (0, 0))
 
