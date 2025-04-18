@@ -24,6 +24,11 @@ def main():
 
     # Main simulation loop
     while viz.running:
+        # Check if the dummy was hit by the laser in the previous step
+        if sim.dummy_is_dead:
+            print("Laser hit detected in main loop, stopping simulation.")
+            break # Exit loop
+
         # Step the physics simulation
         sim.step(DT)
 

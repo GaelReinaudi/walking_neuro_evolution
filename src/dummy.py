@@ -5,9 +5,11 @@ from pymunk.vec2d import Vec2d
 import math # Needed for moment calculation
 
 class Dummy:
-    def __init__(self, space: pymunk.Space, position: tuple[float, float]):
+    def __init__(self, space: pymunk.Space, position: tuple[float, float], collision_type: int):
+        """Initializes the dummy with body parts, joints, and assigns collision types."""
         self.space = space
         self.initial_position = Vec2d(*position)
+        self.collision_type = collision_type # Store the collision type
 
         # --- Properties ---
         self.bodies: list[pymunk.Body] = []
@@ -90,12 +92,13 @@ class Dummy:
 
 
     def _create_part(self, mass: float, size: tuple[float, float], position: tuple[float, float] | Vec2d, friction: float = 0.8) -> pymunk.Body:
-        """Helper function to create a rectangular body part."""
+        """Helper function to create a rectangular body part and assign collision type."""
         body = pymunk.Body(mass, pymunk.moment_for_box(mass, size))
         body.position = position
         shape = pymunk.Poly.create_box(body, size)
         shape.friction = friction
         shape.filter = pymunk.ShapeFilter(group=1) # Prevent self-collision within dummy parts
+        shape.collision_type = self.collision_type # Assign the type passed during init
         self.space.add(body, shape)
         self.bodies.append(body)
         self.shapes.append(shape)

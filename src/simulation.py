@@ -90,17 +90,26 @@ class Simulation:
         self.space.step(dt)
 
     def get_fitness(self) -> float:
-        """Calculates fitness. If dummy died, maybe return 0 or negative?"
+        """Calculates fitness based on the dummy's horizontal position.
 
+        Fitness is defined as the distance moved to the left from the starting x-position.
+        If the dummy was hit by the laser, the fitness calculation still proceeds,
+        but the simulation run would have ended earlier.
+
+        Returns:
+            The calculated fitness score.
+
+        Raises:
+            ValueError: If the dummy has not been added to the simulation yet.
+        """
         if self.dummy is None:
             raise ValueError("Cannot get fitness before adding a dummy.")
 
-        # If hit by laser, the simulation ends early. Fitness is often penalized.
-        if self.dummy_is_dead:
-            # Option 1: Return a fixed low score
-            # return -1000.0
-            # Option 2: Return distance traveled *before* getting hit
-            pass # Fall through to standard calculation for now
+        # If hit by laser, the simulation ends early. Fitness is often penalized
+        # in the calling code (e.g., by considering the shorter duration).
+        # We don't modify the calculation here, just note the flag is set.
+        # if self.dummy_is_dead:
+        #     print("(Fitness calculated after being hit by laser)")
 
         initial_x = self.dummy.initial_position.x
         current_x = self.dummy.get_body_position().x
