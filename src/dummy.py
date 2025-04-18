@@ -32,6 +32,7 @@ class Dummy:
         # Sensor placeholders (update these properly later)
         self.r_foot_contact = False
         self.l_foot_contact = False
+        self.final_x: float | None = None # Store final X position when hit
 
         # --- Define body part dimensions and masses ---
         body_mass = 10
@@ -211,11 +212,11 @@ class Dummy:
 
     # --- Hit State --- 
     def mark_as_hit(self) -> Vec2d | None:
-        """Marks the dummy as hit and returns its current center position. Does not modify physics state."""
+        """Marks the dummy as hit, stores final X position, and returns its current center position."""
         if not self.is_hit:
             self.is_hit = True
-            print(f"Dummy {self.id} internally marked as hit.")
-            # Return the center position at the time of hit for the simulation to use
+            self.final_x = self.body.position.x # Record final position
+            print(f"Dummy {self.id} internally marked as hit at x={self.final_x:.2f}.")
             return self.body.position 
         return None # Already hit
 

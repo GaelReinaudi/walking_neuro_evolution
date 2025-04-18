@@ -4,9 +4,10 @@ import pymunk
 import random # For explosion velocity
 from pymunk.vec2d import Vec2d # For explosion velocity
 from dummy import Dummy
-# Import the neural network
-from neural_network import NeuralNetwork
+# NEAT imports
+import neat
 import math
+import time # For limiting generation time
 
 # Collision Types
 COLLISION_TYPE_DUMMY = 1
@@ -27,29 +28,55 @@ DEBRIS_RADIUS = 3
 DEBRIS_VELOCITY_SCALE = 150 # Adjust for bigger/smaller visual explosion
 DEBRIS_CLEANUP_Y = -100 # Y threshold to remove debris
 
+# Simulation Constants
+SIM_DT = 1/60.0
+DEFAULT_DUMMY_START_POS = (250, 150)
+GENERATION_TIME_LIMIT_SEC = 30 # Max time per generation
+
 class Simulation:
     def __init__(self, gravity: tuple[float, float] = (0, -981.0)):
         """Initializes the simulation space, gravity, ground, laser, and collision handler.
-           Manages multiple dummies and their associated neural networks.
+           Manages debris cleanup and collision handling.
         """
         self.space = pymunk.Space()
         self.space.gravity = gravity
         self.laser_body: pymunk.Body | None = None
         self.laser_shape: pymunk.Shape | None = None
-
-        # Lists to manage multiple dummies and networks
-        self.dummies: list[Dummy] = []
-        self.neural_networks: list[NeuralNetwork] = []
-        self.dummies_dead: list[bool] = [] # Tracks if dummy[i] is dead
-        self.dummy_id_to_index: dict[int, int] = {} # Map dummy.id to list index
-
-        # Track explosion debris
         self.debris_bodies: list[pymunk.Body] = []
         self.debris_shapes: list[pymunk.Shape] = []
+        self.viz = None # Optional visualizer reference
 
         self._add_ground()
         self._add_laser() # Laser is shared by all
         self._setup_collision_handler()
+
+    def set_visualizer(self, viz):
+        """Allows associating a visualizer for drawing during run_generation."""
+        self.viz = viz
+
+    def _clear_simulation_state(self):
+        """Removes all dynamic elements (dummies, debris) from the space."""
+        # Remove debris first
+        while self.debris_bodies:
+            body = self.debris_bodies.pop()
+            shape = self.debris_shapes.pop()
+            if shape in self.space.shapes: self.space.remove(shape)
+            if body in self.space.bodies: self.space.remove(body)
+        
+        # Remove any remaining dummies (important if generation ends early)
+        # Need to get dummies directly from space as internal lists are cleared per-generation
+        dummies_in_space = [shape.user_data for shape in self.space.shapes 
+                            if hasattr(shape, 'user_data') and isinstance(shape.user_data, Dummy)]
+        unique_dummies = list(set(dummies_in_space)) # Get unique dummy instances
+        for dummy in unique_dummies:
+            if isinstance(dummy, Dummy): # Type check
+                dummy.remove_from_space()
+
+    def _reset_laser(self):
+        """Resets the laser to its starting position and velocity."""
+        if self.laser_body:
+            self.laser_body.position = (LASER_START_X, LASER_HEIGHT / 2)
+            self.laser_body.velocity = (LASER_SPEED, 0)
 
     def _add_ground(self) -> None:
         """Adds a static ground segment to the simulation space."""
@@ -84,32 +111,18 @@ class Simulation:
         
         if dummy_shape and hasattr(dummy_shape, 'user_data') and isinstance(dummy_shape.user_data, Dummy):
             hit_dummy: Dummy = dummy_shape.user_data
-            dummy_index = self.dummy_id_to_index.get(hit_dummy.id)
-
-            # Check if already processed (collision might trigger multiple times)
-            if dummy_index is not None and not self.dummies_dead[dummy_index]:
-                print(f"ZAP! Dummy {hit_dummy.id} hit by laser. Exploding!")
-                
-                # 1. Mark dummy as hit internally (gets position)
-                explosion_center = hit_dummy.mark_as_hit()
-                
-                if explosion_center: 
-                    # 2. Mark as logically dead for simulation steps
-                    self.dummies_dead[dummy_index] = True
-                    
-                    # 3. Create visual explosion debris
-                    self._create_explosion(explosion_center)
-                    
-                    # 4. Remove original dummy parts from space
-                    # Must happen *after* creating explosion based on its position
-                    hit_dummy.remove_from_space()
-                else:
-                    # Mark_as_hit returned None, likely already hit
-                    pass
+            
+            # Only process if not already hit
+            explosion_center = hit_dummy.mark_as_hit()
+            if explosion_center:
+                print(f"ZAP! Dummy {hit_dummy.id} hit by laser. Exploding at {explosion_center}!")
+                # Note: We don't use self.dummies_dead anymore
+                self._create_explosion(explosion_center)
+                hit_dummy.remove_from_space()
         else:
             print("Warning: Laser collision detected, but couldn't identify Dummy instance.")
 
-        return True # Process collision (sensor means no physical response)
+        return True
 
     def _create_explosion(self, center_pos: Vec2d):
         """Creates debris particles at the given position."""
@@ -157,39 +170,92 @@ class Simulation:
         handler.begin = self._laser_hit_dummy
         # TODO: Add handler for ground collisions if needed for sensors
 
-    def add_dummy_instance(self, position: tuple[float, float]) -> None:
-        """Creates a new Dummy and its associated NeuralNetwork, adding them to the simulation."""
-        new_dummy = Dummy(self.space, position, collision_type=COLLISION_TYPE_DUMMY)
-        new_nn = NeuralNetwork() # Each dummy gets its own NN instance
+    # --- Main Evaluation Loop for NEAT --- 
+    def run_generation(self, genomes: list[tuple[int, neat.DefaultGenome]], config: neat.Config):
+        """Runs one generation of the simulation for the given genomes.
         
-        # Add to lists and tracking
-        list_index = len(self.dummies)
-        self.dummies.append(new_dummy)
-        self.neural_networks.append(new_nn)
-        self.dummies_dead.append(False) # Start alive
-        self.dummy_id_to_index[new_dummy.id] = list_index
+        Args:
+            genomes: A list of (genome_id, genome_object) tuples.
+            config: The NEAT configuration object.
+        """
+        self._clear_simulation_state()
+        self._reset_laser()
+        
+        dummies_this_gen: dict[int, Dummy] = {} # genome_id -> Dummy instance
+        networks_this_gen: dict[int, neat.nn.FeedForwardNetwork] = {} # genome_id -> network
+        active_genomes = len(genomes)
+        start_time = time.time()
 
-        print(f"Added Dummy {new_dummy.id} at index {list_index}")
+        # Create dummies and networks for this generation
+        for genome_id, genome in genomes:
+            genome.fitness = 0 # Initialize fitness
+            net = neat.nn.FeedForwardNetwork.create(genome, config)
+            dummy_start_pos = (DEFAULT_DUMMY_START_POS[0], 
+                               DEFAULT_DUMMY_START_POS[1] + random.uniform(-20, 20)) # Slight vertical stagger
+            dummy = Dummy(self.space, dummy_start_pos, collision_type=COLLISION_TYPE_DUMMY)
+            
+            networks_this_gen[genome_id] = net
+            dummies_this_gen[genome_id] = dummy
 
-    def step(self, dt: float) -> None:
-        """Advances the simulation: updates all active dummies via NNs, then steps physics."""
-        # Update motors for all *active* dummies based on their NN
-        for i, dummy in enumerate(self.dummies):
-            if not self.dummies_dead[i]:
-                try:
-                    sensor_values = dummy.get_sensor_data()
-                    motor_outputs = self.neural_networks[i].activate(sensor_values)
-                    dummy.set_motor_rates(motor_outputs)
-                except Exception as e:
-                    print(f"Error processing Dummy {dummy.id} at index {i}: {e}")
-                    # Mark as dead or handle error appropriately?
-                    self.dummies_dead[i] = True 
+        # --- Simulation Loop for this Generation --- 
+        while active_genomes > 0 and (time.time() - start_time) < GENERATION_TIME_LIMIT_SEC:
+            # Check for visualization exit requests
+            if self.viz and not self.viz.running:
+                # If user closes window during eval, stop the generation early
+                 print("Visualizer closed, ending generation early.")
+                 break
 
-        # Step the entire physics space once
-        self.space.step(dt)
+            # Update NNs and step physics
+            current_active = 0
+            for genome_id, genome in genomes:
+                dummy = dummies_this_gen.get(genome_id)
+                if dummy and not dummy.is_hit:
+                    current_active += 1
+                    try:
+                        net = networks_this_gen[genome_id]
+                        sensor_values = dummy.get_sensor_data()
+                        motor_outputs = net.activate(sensor_values)
+                        dummy.set_motor_rates(motor_outputs)
+                    except Exception as e:
+                        print(f"Error activating network for genome {genome_id} (Dummy {dummy.id}): {e}")
+                        # Mark as hit on error?
+                        hit_pos = dummy.mark_as_hit()
+                        if hit_pos: self._create_explosion(hit_pos)
+                        dummy.remove_from_space() # Remove on error
+                        
+            # Update active count
+            active_genomes = current_active
 
-        # Cleanup old debris particles
-        self._cleanup_debris()
+            # Step physics
+            self.space.step(SIM_DT)
+
+            # Cleanup debris
+            self._cleanup_debris()
+
+            # Update visualization if attached
+            if self.viz:
+                if not self.viz.draw(self):
+                    # Stop generation if visualizer quit
+                    active_genomes = 0 # Ensure loop terminates
+                    break 
+            
+        # --- End of Generation Loop --- 
+        print(f"Generation finished. Time: {time.time() - start_time:.2f}s. Active dummies remaining: {active_genomes}")
+
+        # Calculate fitness for all genomes in this generation
+        for genome_id, genome in genomes:
+            dummy = dummies_this_gen.get(genome_id)
+            if dummy:
+                # Fitness = distance moved left
+                # Use final_x if hit, otherwise current position
+                final_x = dummy.final_x if dummy.final_x is not None else dummy.get_body_position().x
+                fitness = dummy.initial_position.x - final_x
+                genome.fitness = fitness if fitness is not None else -100 # Penalize errors severely
+                # print(f"Genome {genome_id}, Dummy {dummy.id}, Final X: {final_x:.2f}, Fitness: {genome.fitness:.2f}")
+            else:
+                 # Should not happen if setup is correct
+                 genome.fitness = -1000 
+                 print(f"Error: Dummy not found for genome {genome_id} during fitness calculation.")
 
     # --- Removed Methods --- 
     # reset() method is removed - restarting logic now in main.py if needed
