@@ -1,73 +1,41 @@
 # main.py
 import sys
 import os
-import time # For pausing after reset
+# import time # No longer resetting
 
 # Add src directory to Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
 
 from simulation import Simulation
-from visualizer import Visualizer # Import the new Visualizer class
+from visualizer import Visualizer
 
 DT = 1/60.0 # Physics timestep
-# Move dummy start pos further right
 DUMMY_START_POS = (250, 150)
+NUM_DUMMIES = 100
 
 def main():
     print("Initializing simulation and visualizer...")
-    # Initialize simulation and visualizer ONCE
     sim = Simulation()
-    viz = Visualizer() # Uses new default height
+    viz = Visualizer()
 
-    # Add the first dummy
-    print("Adding initial dummy...")
-    sim.add_dummy(position=DUMMY_START_POS)
-    generation = 1
+    # Add the dummies
+    print(f"Adding {NUM_DUMMIES} dummies...")
+    for i in range(NUM_DUMMIES):
+        # Slightly stagger start positions vertically for visibility (optional)
+        start_pos = (DUMMY_START_POS[0], DUMMY_START_POS[1] + i * 2)
+        sim.add_dummy_instance(position=start_pos)
 
-    print("Starting simulation generations (Press ESC or close window to quit)...")
+    print("Starting continuous simulation (Press ESC or close window to quit)...")
 
-    # Outer loop for handling runs and resets
+    # Main simulation loop (no generations/resets)
     while viz.running:
-        # Inner loop for a single simulation run (until death or quit)
-        run_active = True
-        while run_active and viz.running:
-            # Check for user quit first
-            # process_events is called within viz.draw, updating viz.running
-            if not viz.running:
-                break
+        # Step the physics simulation (includes NN updates for active dummies)
+        sim.step(DT)
 
-            # Check if the dummy was hit by the laser
-            if sim.dummy_is_dead:
-                print(f"End of Generation {generation}. Dummy hit by laser.")
-                run_active = False # End this inner loop
-                break # Go to reset logic
-
-            # Step the physics simulation
-            sim.step(DT)
-
-            # Draw the current state (also handles Pygame events)
-            # Pass the simulation object for camera focus
-            if not viz.draw(sim): # viz.draw now returns True if still running
-                run_active = False # End this inner loop if user quit
-                break # Go to outer loop check
-
-        # --- End of single run --- 
-
-        # If the visualizer is still running, calculate fitness and reset
-        if viz.running:
-            fitness = sim.get_fitness()
-            print(f"Generation {generation} Fitness: {fitness:.2f}")
-            if sim.dummy:
-                print(f"Final X position: {sim.dummy.get_body_position().x:.2f}")
-            
-            # Reset for the next generation
-            generation += 1
-            print(f"\nResetting for Generation {generation}...")
-            sim.reset(dummy_start_pos=DUMMY_START_POS)
-            time.sleep(0.5) # Brief pause to see the reset
-        else:
-            # Visualizer was closed, break outer loop
-            break
+        # Draw the current state (handles Pygame events)
+        # Pass the simulation object for camera focus
+        if not viz.draw(sim):
+            break # Exit loop if user quit
 
     # --- Simulation ended (user quit) --- 
     print("\nSimulation program finished.")

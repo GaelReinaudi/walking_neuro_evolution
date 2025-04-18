@@ -3,23 +3,32 @@
 import pymunk
 from pymunk.vec2d import Vec2d
 import math # Needed for moment calculation
+import random # For default color
 
 # Constants for motors
 MOTOR_RATE = 5 # Max angular velocity (rad/s)
 MOTOR_MAX_FORCE = 50000 # Max force the motor can apply
+EXPLOSION_IMPULSE = 150 # Adjust this value for bigger/smaller explosions
 
 class Dummy:
+    _next_id = 0 # Class variable for assigning unique IDs
+
     def __init__(self, space: pymunk.Space, position: tuple[float, float], collision_type: int):
-        """Initializes the dummy with body parts, joints, motors, and assigns collision types."""
+        """Initializes the dummy with body parts, joints, motors, assigns collision types, colors, and an ID."""
         self.space = space
         self.initial_position = Vec2d(*position)
-        self.collision_type = collision_type # Store the collision type
+        self.collision_type = collision_type
+        self.id = Dummy._next_id
+        Dummy._next_id += 1
 
         # --- Properties ---
         self.bodies: list[pymunk.Body] = []
         self.shapes: list[pymunk.Shape] = []
         self.joints: list[pymunk.Constraint] = []
         self.motors: list[pymunk.SimpleMotor] = []
+        self.is_hit = False # Flag to indicate if hit by laser
+        self.hit_color = (255, 0, 0, 255) # Red
+        self.default_color = (random.randint(50, 200), random.randint(50, 200), random.randint(50, 200), 255)
         # Sensor placeholders (update these properly later)
         self.r_foot_contact = False
         self.l_foot_contact = False
@@ -120,13 +129,15 @@ class Dummy:
 
 
     def _create_part(self, mass: float, size: tuple[float, float], position: tuple[float, float] | Vec2d, friction: float = 0.8) -> pymunk.Body:
-        """Helper function to create a rectangular body part and assign collision type."""
+        """Helper function to create a rectangular body part, assign collision type, user_data, and color."""
         body = pymunk.Body(mass, pymunk.moment_for_box(mass, size))
         body.position = position
         shape = pymunk.Poly.create_box(body, size)
         shape.friction = friction
-        shape.filter = pymunk.ShapeFilter(group=1) # Prevent self-collision within dummy parts
-        shape.collision_type = self.collision_type # Assign the type passed during init
+        shape.filter = pymunk.ShapeFilter(group=1)
+        shape.collision_type = self.collision_type
+        shape.user_data = self # Store reference to this Dummy instance
+        shape.color = self.default_color # Assign initial color
         self.space.add(body, shape)
         self.bodies.append(body)
         self.shapes.append(shape)
@@ -134,16 +145,19 @@ class Dummy:
 
     def remove_from_space(self) -> None:
         """Removes all bodies, shapes, joints, and motors associated with this dummy from the space."""
-        for motor in self.motors:      # Remove motors first (as they are constraints)
-            self.space.remove(motor)
+        for motor in self.motors:
+            if motor in self.space.constraints:
+                self.space.remove(motor)
         for joint in self.joints:
-            self.space.remove(joint)
+            if joint in self.space.constraints:
+                self.space.remove(joint)
         for shape in self.shapes:
-            self.space.remove(shape)
+            if shape in self.space.shapes:
+                self.space.remove(shape)
         for body in self.bodies:
-            self.space.remove(body)
-        # Clear local lists
-        self.motors.clear() # Clear motors list too
+             if body in self.space.bodies:
+                self.space.remove(body)
+        self.motors.clear()
         self.joints.clear()
         self.shapes.clear()
         self.bodies.clear()
@@ -161,12 +175,15 @@ class Dummy:
                    Order should match self.motors (e.g., r_shoulder, l_shoulder, r_hip, l_hip).
                    Values typically scaled by MOTOR_RATE.
         """ 
+        # Check if dummy is already hit/exploding - if so, don't apply motor commands
+        if self.is_hit or not self.motors:
+             return
+             
         if len(rates) != len(self.motors):
-            print(f"Warning: Mismatch between rates provided ({len(rates)}) and motors ({len(self.motors)})")
+            print(f"Warning: Mismatch between rates provided ({len(rates)}) and motors ({len(self.motors)}) for Dummy {self.id}")
             return
 
         for motor, rate_input in zip(self.motors, rates):
-            # Scale the input (often NN output is [-1, 1]) to the desired motor rate range
             motor.rate = rate_input * MOTOR_RATE
 
     # --- Sensor Data ---
@@ -178,24 +195,29 @@ class Dummy:
             Order: r_shoulder_angle, l_shoulder_angle, r_hip_angle, l_hip_angle,
                    r_foot_contact, l_foot_contact
         """
-        sensors: list[float] = []
+        # Return default/zero sensors if hit, as parts may be gone
+        if self.is_hit:
+            return [0.0] * 6 # Match expected sensor count
 
-        # Relative angles (body vs limb)
-        # Normalize angles to be relative to the body's orientation
+        sensors: list[float] = []
         body_angle = self.body.angle
         sensors.append(self.r_arm.angle - body_angle)
         sensors.append(self.l_arm.angle - body_angle)
         sensors.append(self.r_leg.angle - body_angle)
         sensors.append(self.l_leg.angle - body_angle)
-
-        # Contact sensors (Placeholders - needs proper implementation)
-        # TODO: Implement actual contact detection (e.g., via collision handler or checking arbiters)
         sensors.append(1.0 if self.r_foot_contact else 0.0)
         sensors.append(1.0 if self.l_foot_contact else 0.0)
-
-        # Potentially add other sensors: body angle, velocity, angular velocity, height, etc.
-
         return sensors
+
+    # --- Hit State --- 
+    def mark_as_hit(self) -> Vec2d | None:
+        """Marks the dummy as hit and returns its current center position. Does not modify physics state."""
+        if not self.is_hit:
+            self.is_hit = True
+            print(f"Dummy {self.id} internally marked as hit.")
+            # Return the center position at the time of hit for the simulation to use
+            return self.body.position 
+        return None # Already hit
 
     # Add methods to control motors later
     # def set_motor_rates(self, rates: list[float]): ... 

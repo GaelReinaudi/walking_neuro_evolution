@@ -6,7 +6,7 @@ from simulation import Simulation # Needed to access dummy position
 
 # Constants for camera
 CAMERA_Y_OFFSET = -50 # How much space below the ground (0) to show
-CAMERA_X_FOLLOW_FACTOR = 0.3 # Where the dummy should be horizontally (0=left, 0.5=center, 1=right)
+# CAMERA_X_FOLLOW_FACTOR = 0.3 # No longer following dummy
 
 class Visualizer:
     def __init__(self, width: int = 1200, height: int = 350, fps: int = 60):
@@ -36,7 +36,7 @@ class Visualizer:
         """Clears the screen, updates camera, draws the Pymunk space, and updates the display.
 
         Args:
-            sim: The Simulation object (contains space and dummy).
+            sim: The Simulation object (contains space and laser position).
 
         Returns:
             False if the user quit, True otherwise.
@@ -46,12 +46,13 @@ class Visualizer:
             return False
 
         # --- Update Camera --- 
-        # Follow the dummy horizontally
-        if sim.dummy:
-            target_x = sim.dummy.get_body_position().x - self.width * CAMERA_X_FOLLOW_FACTOR
-            # Simple lerp for smoother camera movement (optional)
-            # self.camera_offset_x = self.camera_offset_x * 0.95 + target_x * 0.05
+        # Follow the laser horizontally, keeping it near the left edge
+        if sim.laser_body:
+             # Adjust target_x calculation to keep laser near left (e.g., 10% from edge)
+            target_x = sim.laser_body.position.x - self.width * 0.10
             self.camera_offset_x = target_x # Direct follow for now
+        # else: # Optional: if laser doesn't exist yet, center on 0? 
+        #     self.camera_offset_x = -self.width * 0.5 
 
         # Fixed Y offset to keep ground visible
         self.camera_offset_y = CAMERA_Y_OFFSET
