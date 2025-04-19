@@ -186,7 +186,15 @@ class Simulation:
             dummy: Dummy = dummy_shape.user_data
             
             # Determine which part is colliding based on the body
-            if dummy_shape.body == dummy.r_leg:
+            if dummy_shape.body == dummy.head:
+                # Kill the dummy if its head touches the ground
+                hit_pos = dummy.mark_as_hit()
+                if hit_pos:
+                    # print(f"CRASH! Dummy {dummy.id} died from head collision with ground at x={hit_pos.x:.2f}!")
+                    self._create_explosion(hit_pos)
+                    dummy.remove_from_space()
+                return True
+            elif dummy_shape.body == dummy.r_leg:
                 dummy.r_foot_contact = True
             elif dummy_shape.body == dummy.l_leg:
                 dummy.l_foot_contact = True
