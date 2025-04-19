@@ -265,7 +265,7 @@ class Simulation:
             
             # Run simulations in parallel
             with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
-                futures = [executor.submit(_simulate_dummy, gc) for gc in genome_configs]
+                futures = [executor.submit(self._simulate_dummy, gc) for gc in genome_configs]
                 results = [future.result() for future in concurrent.futures.as_completed(futures)]
         
         # Process results
@@ -412,7 +412,7 @@ class Simulation:
         
         return results
 
-    def _simulate_dummy(genome_config):
+    def _simulate_dummy(self, genome_config):
         """Run simulation for a single dummy in isolation.
         
         Args:

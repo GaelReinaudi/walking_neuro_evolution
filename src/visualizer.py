@@ -1,6 +1,8 @@
 import pygame
 import pymunk
 import pymunk.pygame_util
+import os
+import random  # Import Python's random module
 # Assuming simulation.py is in the same parent directory (src)
 from simulation import Simulation # Needed to access dummy position
 
@@ -62,7 +64,44 @@ class Visualizer:
         self.show_network = True
         
         # Camera should be fixed until laser reaches this x coordinate
-        self.camera_pan_threshold = 100
+        self.camera_pan_threshold = 120
+        
+        # Load the face image for the laser
+        try:
+            image_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'images', 'face.png')
+            self.face_image = pygame.image.load(image_path)
+            self.face_image = pygame.transform.scale(self.face_image, (50, 50))  # Adjust size as needed
+            print(f"Loaded face image from {image_path}")
+        except Exception as e:
+            print(f"Error loading face image: {e}")
+            self.face_image = None
+            
+        # Create a texture for the ground
+        self.ground_texture = self._create_ground_texture()
+
+    def _create_ground_texture(self, width=200, height=20):
+        """Create a repeatable texture for the ground."""
+        texture = pygame.Surface((width, height), pygame.SRCALPHA)
+        # Fill with base color
+        texture.fill((150, 150, 150))
+        
+        # Add some texture details
+        for i in range(0, width, 10):
+            # Alternate dark and light stripes
+            color = (100, 100, 100) if i % 20 == 0 else (180, 180, 180)
+            pygame.draw.line(texture, color, (i, 0), (i, height), 2)
+            
+        # Add horizontal lines
+        for i in range(0, height, 5):
+            pygame.draw.line(texture, (130, 130, 130), (0, i), (width, i), 1)
+            
+        # Add some random dots for texture
+        for _ in range(100):
+            x = random.randint(0, width-1)
+            y = random.randint(0, height-1)
+            pygame.draw.circle(texture, (90, 90, 90), (int(x), int(y)), 1)
+            
+        return texture
 
     def update_stats(self, stats_dict: dict):
         """Update the stats to be displayed on screen."""
@@ -112,7 +151,7 @@ class Visualizer:
         laser_x = 0
         if hasattr(sim, 'laser_body') and sim.laser_body:
             laser_x = sim.laser_body.position.x
-                    
+        
         # Explicitly force camera to follow laser after threshold
         if laser_x >= self.camera_pan_threshold:
             # Camera follows laser position - this is what creates the panning effect
@@ -136,8 +175,21 @@ class Visualizer:
         # --- Draw Scene --- 
         # Clear screen
         self.screen.fill(pygame.Color("lightblue"))
+        
+        # Draw textured ground before the physics objects
+        ground_y = 0  # Ground height in world coordinates
+        texture_width = self.ground_texture.get_width()
+        
+        # Draw repeating ground texture along the full width
+        world_width = 2000  # Some large value for the world width
+        screen_ground_y = (ground_y - self.camera_offset_y) * self.zoom
+        
+        for x in range(0, world_width, texture_width):
+            screen_x = (x - self.camera_offset_x) * self.zoom
+            if 0 <= screen_x <= self.width:
+                self.screen.blit(self.ground_texture, (screen_x, screen_ground_y))
 
-        # Draw a vertical red line at x=100 (in world coordinates) for debugging
+        # Draw a vertical red line at x=100 (in world coordinates) for threshold marker
         x_marker = 100
         screen_x = (x_marker - self.camera_offset_x) * self.zoom
         pygame.draw.line(
@@ -150,6 +202,16 @@ class Visualizer:
 
         # Draw the space with physics objects
         sim.space.debug_draw(self.draw_options)
+        
+        # Draw face image at laser position if available
+        if self.face_image and hasattr(sim, 'laser_body') and sim.laser_body:
+            laser_pos = sim.laser_body.position
+            screen_laser_x = (laser_pos.x - self.camera_offset_x) * self.zoom
+            screen_laser_y = (laser_pos.y - self.camera_offset_y) * self.zoom
+            # Adjust position to center the image on the laser
+            image_rect = self.face_image.get_rect()
+            image_rect.center = (screen_laser_x, screen_laser_y)
+            self.screen.blit(self.face_image, image_rect)
 
         # Flip screen vertically (Pymunk Y is inverted relative to Pygame)
         flipped_surface = pygame.transform.flip(self.screen, False, True)
