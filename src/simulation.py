@@ -115,7 +115,7 @@ class Simulation:
             # Only process if not already hit
             explosion_center = hit_dummy.mark_as_hit()
             if explosion_center:
-                print(f"ZAP! Dummy {hit_dummy.id} hit by laser. Exploding at {explosion_center}!")
+                # print(f"ZAP! Dummy {hit_dummy.id} hit by laser. Exploding at {explosion_center}!")
                 # Note: We don't use self.dummies_dead anymore
                 self._create_explosion(explosion_center)
                 hit_dummy.remove_from_space()

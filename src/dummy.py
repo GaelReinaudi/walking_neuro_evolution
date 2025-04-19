@@ -7,7 +7,7 @@ import random # For default color
 
 # Constants for motors
 MOTOR_RATE = 5 # Max angular velocity (rad/s)
-MOTOR_MAX_FORCE = 50000 # Max force the motor can apply
+MOTOR_MAX_FORCE = 500000 # Max force the motor can apply
 EXPLOSION_IMPULSE = 150 # Adjust this value for bigger/smaller explosions
 
 class Dummy:
@@ -280,7 +280,7 @@ class Dummy:
         if not self.is_hit:
             self.is_hit = True
             self.final_x = self.body.position.x # Record final position
-            print(f"Dummy {self.id} internally marked as hit at x={self.final_x:.2f}.")
+            # print(f"Dummy {self.id} internally marked as hit at x={self.final_x:.2f}.")
             return self.body.position 
         return None # Already hit
 
