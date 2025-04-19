@@ -4,12 +4,20 @@ import pymunk.pygame_util
 # Assuming simulation.py is in the same parent directory (src)
 from simulation import Simulation # Needed to access dummy position
 
+# Try to import the network visualizer, but continue if it fails
+try:
+    from network_viz import NetworkVisualizer
+    NETWORK_VIZ_AVAILABLE = True
+except ImportError:
+    print("Warning: NetworkVisualizer module not found. Neural network visualization will be disabled.")
+    NETWORK_VIZ_AVAILABLE = False
+
 # Constants for camera
 CAMERA_Y_OFFSET = 0  # Increased to focus higher on the action
-ZOOM_FACTOR = 2.5  # Increased zoom factor for more detail
+ZOOM_FACTOR = 4  # Increased zoom factor for more detail
 
 class Visualizer:
-    def __init__(self, width: int = 2400, height: int = 700, fps: int = 60):
+    def __init__(self, width: int = 3200, height: int = 1200, fps: int = 30):
         """Initializes Pygame and sets up the display window."""
         pygame.init()
         self.screen = pygame.display.set_mode((width, height))
@@ -39,10 +47,28 @@ class Visualizer:
             "time_elapsed": 0.0,
             "species_sizes": []
         }
+        
+        # Initialize neural network visualizer
+        if NETWORK_VIZ_AVAILABLE:
+            self.network_viz = NetworkVisualizer(width=400, height=500)
+        else:
+            self.network_viz = None
+        
+        # Store best genome for visualization
+        self.best_genome = None
+        self.neat_config = None
+        
+        # Toggle for network display - ON by default to show it right away
+        self.show_network = True
 
     def update_stats(self, stats_dict: dict):
         """Update the stats to be displayed on screen."""
         self.stats.update(stats_dict)
+        
+    def set_best_genome(self, genome, config):
+        """Set the best genome for neural network visualization."""
+        self.best_genome = genome
+        self.neat_config = config
 
     def process_events(self) -> None:
         """Handles Pygame events, like closing the window."""
@@ -51,10 +77,15 @@ class Visualizer:
                 print("User closed the visualization window")
                 self._running = False
                 return False  # Signal immediate exit
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                print("User pressed ESC, closing visualization")
-                self._running = False
-                return False  # Signal immediate exit
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    print("User pressed ESC, closing visualization")
+                    self._running = False
+                    return False  # Signal immediate exit
+                elif event.key == pygame.K_n and NETWORK_VIZ_AVAILABLE:
+                    # Toggle network visualization
+                    self.show_network = not self.show_network
+                    print(f"Neural network visualization: {'ON' if self.show_network else 'OFF'}")
         return True  # Continue execution
 
     def draw(self, sim: Simulation) -> bool:
@@ -128,6 +159,23 @@ class Visualizer:
         
         # Draw stats on the right side of the screen
         self._draw_stats()
+        
+        # Always show the instruction for toggling network view
+        if NETWORK_VIZ_AVAILABLE:
+            status = "ON" if self.show_network else "OFF"
+            toggle_text = self.font.render(f"Press 'N' to toggle network view (currently {status})", True, (30, 30, 30))
+            self.screen.blit(toggle_text, (25, 25))
+        
+        # Draw neural network visualization if enabled
+        if self.show_network and NETWORK_VIZ_AVAILABLE and self.network_viz and self.best_genome and self.neat_config:
+            try:
+                network_surface = self.network_viz.draw_network(self.best_genome, self.neat_config)
+                # Position in top left corner with some padding
+                self.screen.blit(network_surface, (20, 60))
+            except Exception as e:
+                print(f"Error drawing neural network: {e}")
+                # Disable network visualization on error
+                self.show_network = False
 
         # Update display
         pygame.display.flip()
@@ -215,4 +263,40 @@ class Visualizer:
     @property
     def running(self) -> bool:
         """Returns whether the visualization loop should continue."""
+        return self._running 
+
+    def _draw_network(self, surface, genome, config):
+        """Draw the neural network visualization on the provided surface."""
+        try:
+            if not NETWORK_VIZ_AVAILABLE or not self.network_viz or not genome or not config:
+                return False
+
+            # Get the network visualization as a surface
+            network_surface = self.network_viz.draw_network(genome, config)
+            if network_surface:
+                # Position in top left corner with some padding
+                surface.blit(network_surface, (20, 60))
+                return True
+            return False
+        except Exception as e:
+            print(f"Error drawing neural network: {e}")
+            return False
+
+    def update(self):
+        """Update the visualization."""
+        if not self._running:
+            return False
+
+        self.handle_events()
+        self.screen.fill((240, 240, 240))  # light grey background
+        
+        # Draw physics objects
+        self._draw_physics_objects()
+        
+        # Draw neural network visualization
+        self._draw_network(self.screen, self.best_genome, self.neat_config)
+        
+        # Update display
+        pygame.display.flip()
+        
         return self._running 
