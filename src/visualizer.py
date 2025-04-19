@@ -17,7 +17,7 @@ CAMERA_Y_OFFSET = 0  # Increased to focus higher on the action
 ZOOM_FACTOR = 4  # Increased zoom factor for more detail
 
 class Visualizer:
-    def __init__(self, width: int = 3200, height: int = 1200, fps: int = 30):
+    def __init__(self, width: int = 3200, height: int = 800, fps: int = 30):
         """Initializes Pygame and sets up the display window."""
         pygame.init()
         self.screen = pygame.display.set_mode((width, height))

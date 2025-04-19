@@ -198,9 +198,9 @@ class Simulation:
                     self._create_explosion(hit_pos)
                     dummy.remove_from_space()
                 return True
-            elif dummy_shape.body == dummy.r_leg:
+            elif dummy_shape.body == dummy.r_lower_leg:  # Now checking lower leg for foot contact
                 dummy.r_foot_contact = True
-            elif dummy_shape.body == dummy.l_leg:
+            elif dummy_shape.body == dummy.l_lower_leg:  # Now checking lower leg for foot contact
                 dummy.l_foot_contact = True
             elif dummy_shape.body == dummy.r_arm:
                 dummy.r_hand_contact = True
@@ -221,9 +221,9 @@ class Simulation:
             dummy: Dummy = dummy_shape.user_data
             
             # Determine which part is separating based on the body
-            if dummy_shape.body == dummy.r_leg:
+            if dummy_shape.body == dummy.r_lower_leg:  # Now checking lower leg for foot contact
                 dummy.r_foot_contact = False
-            elif dummy_shape.body == dummy.l_leg:
+            elif dummy_shape.body == dummy.l_lower_leg:  # Now checking lower leg for foot contact
                 dummy.l_foot_contact = False
             elif dummy_shape.body == dummy.r_arm:
                 dummy.r_hand_contact = False

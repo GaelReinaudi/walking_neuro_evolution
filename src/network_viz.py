@@ -248,8 +248,8 @@ class NetworkVisualizer:
         y_pos += 25
         
         # Show node counts
-        num_inputs = 21  # Hard-coded for now, should match config
+        num_inputs = 29  # Updated for new sensor count with knees
         num_hidden = 5
-        num_outputs = 4
+        num_outputs = 6  # Updated for new motor count with knees
         text = self.font.render(f"Inputs: {num_inputs} | Hidden: {num_hidden} | Outputs: {num_outputs}", True, self.colors['title'])
         surface.blit(text, (legend_rect.centerx - text.get_width() // 2, y_pos - text.get_height() // 2)) 

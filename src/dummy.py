@@ -6,7 +6,7 @@ import math # Needed for moment calculation
 import random # For default color
 
 # Constants for motors
-MOTOR_RATE = 5 # Max angular velocity (rad/s)
+MOTOR_RATE = 10 # Max angular velocity (rad/s)
 MOTOR_MAX_FORCE = 1000000 # Max force the motor can apply
 EXPLOSION_IMPULSE = 150 # Adjust this value for bigger/smaller explosions
 
@@ -49,7 +49,8 @@ class Dummy:
         head_size = (20, 20)
         limb_mass = 1
         arm_size = (10, 35)
-        leg_size = (10, 45)
+        leg_size = (10, 30)  # Shorter upper legs
+        lower_leg_size = (8, 25)  # Lower legs (from knee to foot)
 
         # --- Calculate relative positions and joint anchors ---
         body_x = self.initial_position.x
@@ -74,7 +75,12 @@ class Dummy:
         r_hip_anchor_body = (body_size[0] / 4, -body_size[1] / 2)
         l_hip_anchor_body = (-body_size[0] / 4, -body_size[1] / 2)
         hip_anchor_leg = (0, leg_size[1] / 2) # Attach at top end of leg
-
+        
+        # Lower leg positions (calculated based on upper leg position)
+        r_lower_leg_pos = (r_leg_pos[0], r_leg_pos[1] - leg_size[1] - lower_leg_size[1]/2)
+        l_lower_leg_pos = (l_leg_pos[0], l_leg_pos[1] - leg_size[1] - lower_leg_size[1]/2)
+        knee_anchor_upper_leg = (0, -leg_size[1]/2)  # Bottom of upper leg
+        knee_anchor_lower_leg = (0, lower_leg_size[1]/2)  # Top of lower leg
 
         # --- Create Body ---
         self.body = self._create_part(body_mass, body_size, self.initial_position)
@@ -112,12 +118,19 @@ class Dummy:
         self.motors.append(l_shoulder_motor)
 
         # --- Create Legs ---
+        # Upper legs
         self.r_leg = self._create_part(limb_mass, leg_size, r_leg_pos)
         r_hip_joint = pymunk.PivotJoint(self.body, self.r_leg, r_hip_anchor_body, hip_anchor_leg)
         r_hip_joint.collide_bodies = False
         self.space.add(r_hip_joint)
         self.joints.append(r_hip_joint)
-        # Add motor
+        
+        # Add hip angle limit to prevent bending past 90 degrees
+        r_hip_limit = pymunk.RotaryLimitJoint(self.body, self.r_leg, -math.pi/2, math.pi/2)
+        self.space.add(r_hip_limit)
+        self.joints.append(r_hip_limit)
+        
+        # Add hip motor
         r_hip_motor = pymunk.SimpleMotor(self.body, self.r_leg, 0)
         r_hip_motor.max_force = MOTOR_MAX_FORCE
         self.space.add(r_hip_motor)
@@ -128,11 +141,52 @@ class Dummy:
         l_hip_joint.collide_bodies = False
         self.space.add(l_hip_joint)
         self.joints.append(l_hip_joint)
-        # Add motor
+        
+        # Add hip angle limit to prevent bending past 90 degrees
+        l_hip_limit = pymunk.RotaryLimitJoint(self.body, self.l_leg, -math.pi/2, math.pi/2)
+        self.space.add(l_hip_limit)
+        self.joints.append(l_hip_limit)
+        
+        # Add hip motor
         l_hip_motor = pymunk.SimpleMotor(self.body, self.l_leg, 0)
         l_hip_motor.max_force = MOTOR_MAX_FORCE
         self.space.add(l_hip_motor)
         self.motors.append(l_hip_motor)
+        
+        # Lower legs (calves)
+        self.r_lower_leg = self._create_part(limb_mass * 0.8, lower_leg_size, r_lower_leg_pos)
+        r_knee_joint = pymunk.PivotJoint(self.r_leg, self.r_lower_leg, knee_anchor_upper_leg, knee_anchor_lower_leg)
+        r_knee_joint.collide_bodies = False
+        self.space.add(r_knee_joint)
+        self.joints.append(r_knee_joint)
+        
+        # Add knee motor
+        r_knee_motor = pymunk.SimpleMotor(self.r_leg, self.r_lower_leg, 0)
+        r_knee_motor.max_force = MOTOR_MAX_FORCE * 0.8  # Slightly less force for knees
+        self.space.add(r_knee_motor)
+        self.motors.append(r_knee_motor)
+        
+        # Add knee angle limit (only bend forward)
+        r_knee_limit = pymunk.RotaryLimitJoint(self.r_leg, self.r_lower_leg, 0, math.pi/2)
+        self.space.add(r_knee_limit)
+        self.joints.append(r_knee_limit)
+        
+        self.l_lower_leg = self._create_part(limb_mass * 0.8, lower_leg_size, l_lower_leg_pos)
+        l_knee_joint = pymunk.PivotJoint(self.l_leg, self.l_lower_leg, knee_anchor_upper_leg, knee_anchor_lower_leg)
+        l_knee_joint.collide_bodies = False
+        self.space.add(l_knee_joint)
+        self.joints.append(l_knee_joint)
+        
+        # Add knee motor
+        l_knee_motor = pymunk.SimpleMotor(self.l_leg, self.l_lower_leg, 0)
+        l_knee_motor.max_force = MOTOR_MAX_FORCE * 0.8  # Slightly less force for knees
+        self.space.add(l_knee_motor)
+        self.motors.append(l_knee_motor)
+        
+        # Add knee angle limit (only bend forward)
+        l_knee_limit = pymunk.RotaryLimitJoint(self.l_leg, self.l_lower_leg, 0, math.pi/2)
+        self.space.add(l_knee_limit)
+        self.joints.append(l_knee_limit)
 
         # Add motors later if needed
 
@@ -201,7 +255,7 @@ class Dummy:
     def get_angular_velocities(self) -> list[float]:
         """Calculate angular velocities for all joints (normalized)."""
         if self.is_hit:
-            return [0.0] * 4
+            return [0.0] * 6  # Updated for 6 motors (including knees)
             
         # Calculate current angular velocities
         body_velocity = self.body.angular_velocity
@@ -209,6 +263,8 @@ class Dummy:
         l_arm_velocity = self.l_arm.angular_velocity - body_velocity
         r_leg_velocity = self.r_leg.angular_velocity - body_velocity
         l_leg_velocity = self.l_leg.angular_velocity - body_velocity
+        r_knee_velocity = self.r_lower_leg.angular_velocity - self.r_leg.angular_velocity
+        l_knee_velocity = self.l_lower_leg.angular_velocity - self.l_leg.angular_velocity
         
         # Normalize by max angular velocity (MOTOR_RATE)
         max_velocity = MOTOR_RATE * 1.5  # A bit higher than max rate to avoid clipping
@@ -216,8 +272,10 @@ class Dummy:
         l_arm_norm = max(-1.0, min(1.0, l_arm_velocity / max_velocity))
         r_leg_norm = max(-1.0, min(1.0, r_leg_velocity / max_velocity))
         l_leg_norm = max(-1.0, min(1.0, l_leg_velocity / max_velocity))
+        r_knee_norm = max(-1.0, min(1.0, r_knee_velocity / max_velocity))
+        l_knee_norm = max(-1.0, min(1.0, l_knee_velocity / max_velocity))
         
-        return [r_arm_norm, l_arm_norm, r_leg_norm, l_leg_norm]
+        return [r_arm_norm, l_arm_norm, r_leg_norm, l_leg_norm, r_knee_norm, l_knee_norm]
 
     # --- Sensor Data ---
     def get_sensor_data(self) -> list[float]:
@@ -225,50 +283,60 @@ class Dummy:
 
         Returns:
             A list of sensor values in the following order:
-            - Relative joint angles (4): r_shoulder, l_shoulder, r_hip, l_hip
-            - Absolute body angles (5): body, r_arm, l_arm, r_leg, l_leg
-            - Joint angular velocities (4): r_shoulder, l_shoulder, r_hip, l_hip
-            - Motor forces (4): r_shoulder, l_shoulder, r_hip, l_hip
+            - Relative joint angles (6): r_shoulder, l_shoulder, r_hip, l_hip, r_knee, l_knee
+            - Absolute body angles (7): body, r_arm, l_arm, r_leg, l_leg, r_lower_leg, l_lower_leg
+            - Joint angular velocities (6): r_shoulder, l_shoulder, r_hip, l_hip, r_knee, l_knee
+            - Motor forces (6): r_shoulder, l_shoulder, r_hip, l_hip, r_knee, l_knee
             - Contact flags (4): r_foot_contact, l_foot_contact, r_hand_contact, l_hand_contact
         """
         # Return default/zero sensors if hit, as parts may be gone
         if self.is_hit:
-            return [0.0] * 21  # Updated sensor count
+            return [0.0] * 29  # Updated sensor count: 6+7+6+6+4 = 29
 
         # Get body reference angle for relative angles
         body_angle = self.body.angle
         
-        # 1-4: Relative joint angles (normalized by dividing by π)
+        # 1-6: Relative joint angles (normalized by dividing by π)
         r_shoulder_angle = (self.r_arm.angle - body_angle) / math.pi
         l_shoulder_angle = (self.l_arm.angle - body_angle) / math.pi
         r_hip_angle = (self.r_leg.angle - body_angle) / math.pi
         l_hip_angle = (self.l_leg.angle - body_angle) / math.pi
+        r_knee_angle = (self.r_lower_leg.angle - self.r_leg.angle) / math.pi
+        l_knee_angle = (self.l_lower_leg.angle - self.l_leg.angle) / math.pi
         
-        # 5-9: Absolute angles (normalized by dividing by 2π)
+        # 7-13: Absolute angles (normalized by dividing by 2π)
         # These give the neural network information about the absolute orientation of body parts
         body_abs_angle = self.body.angle / (2 * math.pi)
         r_arm_abs_angle = self.r_arm.angle / (2 * math.pi)
         l_arm_abs_angle = self.l_arm.angle / (2 * math.pi)
         r_leg_abs_angle = self.r_leg.angle / (2 * math.pi)
         l_leg_abs_angle = self.l_leg.angle / (2 * math.pi)
+        r_lower_leg_abs_angle = self.r_lower_leg.angle / (2 * math.pi)
+        l_lower_leg_abs_angle = self.l_lower_leg.angle / (2 * math.pi)
         
-        # 10-13: Angular velocities (normalized)
+        # 14-19: Angular velocities (normalized)
         angular_velocities = self.get_angular_velocities()
         
-        # 14-17: Motor forces (normalized)
-        motor_forces = self.motor_forces
-        
-        # 18-21: Contact sensors
+        # 20-25: Motor forces (normalized)
+        # Update motor forces array size
+        if len(self.motor_forces) < 6:
+            self.motor_forces = [0.0] * 6  # Expand to 6 motors
+            
+        # 26-29: Contact sensors
+        # Note: We'll use the lower leg for foot contact now
         r_foot_contact = 1.0 if self.r_foot_contact else 0.0
         l_foot_contact = 1.0 if self.l_foot_contact else 0.0
         r_hand_contact = 1.0 if self.r_hand_contact else 0.0
         l_hand_contact = 1.0 if self.l_hand_contact else 0.0
         
         sensors = [
-            r_shoulder_angle, l_shoulder_angle, r_hip_angle, l_hip_angle,
-            body_abs_angle, r_arm_abs_angle, l_arm_abs_angle, r_leg_abs_angle, l_leg_abs_angle,
-            angular_velocities[0], angular_velocities[1], angular_velocities[2], angular_velocities[3],
-            motor_forces[0], motor_forces[1], motor_forces[2], motor_forces[3],
+            r_shoulder_angle, l_shoulder_angle, r_hip_angle, l_hip_angle, r_knee_angle, l_knee_angle,
+            body_abs_angle, r_arm_abs_angle, l_arm_abs_angle, r_leg_abs_angle, l_leg_abs_angle, 
+            r_lower_leg_abs_angle, l_lower_leg_abs_angle,
+            angular_velocities[0], angular_velocities[1], angular_velocities[2], 
+            angular_velocities[3], angular_velocities[4], angular_velocities[5],
+            self.motor_forces[0], self.motor_forces[1], self.motor_forces[2], 
+            self.motor_forces[3], self.motor_forces[4], self.motor_forces[5],
             r_foot_contact, l_foot_contact, r_hand_contact, l_hand_contact
         ]
         
