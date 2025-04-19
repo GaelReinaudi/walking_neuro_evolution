@@ -15,7 +15,7 @@ COLLISION_TYPE_LASER = 2
 COLLISION_TYPE_GROUND = 3
 COLLISION_TYPE_DEBRIS = 4 # New type for explosion parts
 
-LASER_SPEED = 25.0 # Pixels per second
+LASER_SPEED = 50.0 # Pixels per second - doubled for faster laser movement
 # Adjust laser start X to be closer, e.g., just left of the typical screen view
 LASER_START_X = -20
 LASER_HEIGHT = 800 # Make it tall
@@ -31,7 +31,7 @@ DEBRIS_CLEANUP_Y = -100 # Y threshold to remove debris
 # Simulation Constants
 SIM_DT = 1/60.0
 DEFAULT_DUMMY_START_POS = (250, 150)
-GENERATION_TIME_LIMIT_SEC = 30 # Max time per generation
+GENERATION_TIME_LIMIT_SEC = float('inf')  # No time limit
 
 class Simulation:
     def __init__(self, gravity: tuple[float, float] = (0, -981.0)):
@@ -168,7 +168,57 @@ class Simulation:
         """Sets up the handler for laser-dummy collisions."""
         handler = self.space.add_collision_handler(COLLISION_TYPE_LASER, COLLISION_TYPE_DUMMY)
         handler.begin = self._laser_hit_dummy
-        # TODO: Add handler for ground collisions if needed for sensors
+        
+        # Add ground collision handler to detect foot and hand contacts
+        ground_dummy_handler = self.space.add_collision_handler(COLLISION_TYPE_GROUND, COLLISION_TYPE_DUMMY)
+        ground_dummy_handler.begin = self._ground_dummy_collision
+        ground_dummy_handler.separate = self._ground_dummy_separate
+
+    def _ground_dummy_collision(self, arbiter: pymunk.Arbiter, space: pymunk.Space, data: dict) -> bool:
+        """Callback for ground-dummy collisions to detect foot and hand contacts."""
+        dummy_shape = None
+        for shape in arbiter.shapes:
+            if shape.collision_type == COLLISION_TYPE_DUMMY:
+                dummy_shape = shape
+                break
+                
+        if dummy_shape and hasattr(dummy_shape, 'user_data') and isinstance(dummy_shape.user_data, Dummy):
+            dummy: Dummy = dummy_shape.user_data
+            
+            # Determine which part is colliding based on the body
+            if dummy_shape.body == dummy.r_leg:
+                dummy.r_foot_contact = True
+            elif dummy_shape.body == dummy.l_leg:
+                dummy.l_foot_contact = True
+            elif dummy_shape.body == dummy.r_arm:
+                dummy.r_hand_contact = True
+            elif dummy_shape.body == dummy.l_arm:
+                dummy.l_hand_contact = True
+                
+        return True
+        
+    def _ground_dummy_separate(self, arbiter: pymunk.Arbiter, space: pymunk.Space, data: dict) -> bool:
+        """Callback for when a dummy part separates from the ground."""
+        dummy_shape = None
+        for shape in arbiter.shapes:
+            if shape.collision_type == COLLISION_TYPE_DUMMY:
+                dummy_shape = shape
+                break
+                
+        if dummy_shape and hasattr(dummy_shape, 'user_data') and isinstance(dummy_shape.user_data, Dummy):
+            dummy: Dummy = dummy_shape.user_data
+            
+            # Determine which part is separating based on the body
+            if dummy_shape.body == dummy.r_leg:
+                dummy.r_foot_contact = False
+            elif dummy_shape.body == dummy.l_leg:
+                dummy.l_foot_contact = False
+            elif dummy_shape.body == dummy.r_arm:
+                dummy.r_hand_contact = False
+            elif dummy_shape.body == dummy.l_arm:
+                dummy.l_hand_contact = False
+                
+        return True
 
     # --- Main Evaluation Loop for NEAT --- 
     def run_generation(self, genomes: list[tuple[int, neat.DefaultGenome]], config: neat.Config):
@@ -181,10 +231,18 @@ class Simulation:
         self._clear_simulation_state()
         self._reset_laser()
         
+        # Track previous fitness for comparison
+        previous_fitness = {genome_id: genome.fitness for genome_id, genome in genomes}
+        
         dummies_this_gen: dict[int, Dummy] = {} # genome_id -> Dummy instance
         networks_this_gen: dict[int, neat.nn.FeedForwardNetwork] = {} # genome_id -> network
         active_genomes = len(genomes)
         start_time = time.time()
+        
+        # Tracking metrics for each dummy
+        survival_times: dict[int, float] = {}  # genome_id -> survival time
+        movement_distances: dict[int, float] = {}  # genome_id -> distance moved
+        head_stability: dict[int, float] = {}  # genome_id -> head stability score
 
         # Create dummies and networks for this generation
         for genome_id, genome in genomes:
@@ -196,9 +254,12 @@ class Simulation:
             
             networks_this_gen[genome_id] = net
             dummies_this_gen[genome_id] = dummy
+            survival_times[genome_id] = 0.0  # Initialize survival time
+            movement_distances[genome_id] = 0.0  # Initialize movement distance
+            head_stability[genome_id] = 0.0  # Initialize head stability score
 
         # --- Simulation Loop for this Generation --- 
-        while active_genomes > 0 and (time.time() - start_time) < GENERATION_TIME_LIMIT_SEC:
+        while active_genomes > 0:  # Continue until all dummies are hit
             # Check for visualization exit requests
             if self.viz and not self.viz.running:
                 # If user closes window during eval, stop the generation early
@@ -211,6 +272,23 @@ class Simulation:
                 dummy = dummies_this_gen.get(genome_id)
                 if dummy and not dummy.is_hit:
                     current_active += 1
+                    # Update survival time for active dummies
+                    survival_times[genome_id] += SIM_DT
+                    
+                    # Calculate movement (distance from start position)
+                    current_pos = dummy.get_body_position()
+                    distance_moved = abs(current_pos.x - dummy.initial_position.x)
+                    movement_distances[genome_id] = max(movement_distances[genome_id], distance_moved)
+                    
+                    # Track head stability (how close to upright the head stays)
+                    if hasattr(dummy, 'head'):
+                        # Calculate deviation from upright position (head angle should be close to 0)
+                        head_angle = abs(dummy.head.angle % (2 * math.pi))
+                        # Convert to [0, 1] where 1 means perfectly upright
+                        stability_score = 1.0 - min(1.0, head_angle / math.pi)
+                        # Accumulate stability score
+                        head_stability[genome_id] += stability_score * SIM_DT
+                    
                     try:
                         net = networks_this_gen[genome_id]
                         sensor_values = dummy.get_sensor_data()
@@ -242,7 +320,8 @@ class Simulation:
                     break
             
         # --- End of Generation Loop --- 
-        print(f"Generation finished. Time: {time.time() - start_time:.2f}s. Active dummies remaining: {active_genomes}")
+        total_sim_time = time.time() - start_time
+        print(f"Generation finished. Time: {total_sim_time:.2f}s. Active dummies remaining: {active_genomes}")
 
         # If visualizer was closed, just return without calculating fitness
         if self.viz and not self.viz.running:
@@ -250,20 +329,47 @@ class Simulation:
             return
 
         # Calculate fitness for all genomes in this generation
+        # Sort genomes by survival time to identify top performers
+        survival_ranking = sorted([(genome_id, time) for genome_id, time in survival_times.items()], 
+                                 key=lambda x: x[1], reverse=True)
+        
+        # Get top 10% survivors for special bonus
+        top_survivors_count = max(1, len(survival_ranking) // 10)
+        top_survivors = set(gid for gid, _ in survival_ranking[:top_survivors_count])
+        
+        fitness_changes = []
         for genome_id, genome in genomes:
-            dummy = dummies_this_gen.get(genome_id)
-            if dummy:
-                # Fitness = distance moved left
-                # Use final_x if hit, otherwise current position
-                final_x = dummy.final_x if dummy.final_x is not None else dummy.get_body_position().x
-                fitness = dummy.initial_position.x - final_x
-                genome.fitness = fitness if fitness is not None else -100 # Penalize errors severely
-                # print(f"Genome {genome_id}, Dummy {dummy.id}, Final X: {final_x:.2f}, Fitness: {genome.fitness:.2f}")
-            else:
-                 # Should not happen if setup is correct
-                 genome.fitness = -1000 
-                 print(f"Error: Dummy not found for genome {genome_id} during fitness calculation.")
-
+            # Base fitness = how long the dummy survived - ONLY metric
+            survival_time = survival_times.get(genome_id, 0.0)
+            
+            # Set fitness directly to survival time
+            fitness = survival_time
+            
+            # Final assignment
+            genome.fitness = fitness
+            
+            # Track fitness changes for logging
+            fitness_change = fitness - (previous_fitness.get(genome_id, 0.0) or 0.0)
+            fitness_changes.append((genome_id, fitness, fitness_change))
+        
+        # Log fitness stats to verify evolution is happening
+        fitness_changes.sort(key=lambda x: x[1], reverse=True)
+        top_10 = fitness_changes[:10]  # Only show top 10
+        
+        print("\n=== FITNESS REPORT ===")
+        print(f"Top 10 performers:")
+        for i, (gid, fit, change) in enumerate(top_10):
+            change_str = f"+{change:.1f}" if change > 0 else f"{change:.1f}"
+            dummy = dummies_this_gen.get(gid)
+            status = "Survived" if (dummy and not dummy.is_hit) else "Hit"
+            surv_time = survival_times.get(gid, 0.0)
+            print(f"  #{i+1}: Genome {gid} - Time: {surv_time:.1f}s - Fitness: {fit:.1f} ({change_str}) - {status}")
+            
+        # Calculate average fitness change
+        avg_change = sum(change for _, _, change in fitness_changes) / len(fitness_changes)
+        print(f"Average fitness change: {avg_change:+.2f}")
+        print("=====================\n")
+    
     # --- Removed Methods --- 
     # reset() method is removed - restarting logic now in main.py if needed
     # get_fitness() method is removed - fitness calculation would be per-dummy

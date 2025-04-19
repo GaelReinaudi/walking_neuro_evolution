@@ -24,6 +24,25 @@ class Visualizer:
         self.camera_offset_x = 0
         self.camera_offset_y = CAMERA_Y_OFFSET
         self.zoom = ZOOM_FACTOR
+        
+        # Initialize fonts for stats display
+        self.font = pygame.font.SysFont("Arial", 24)
+        self.header_font = pygame.font.SysFont("Arial", 28, bold=True)
+        
+        # Stats data
+        self.stats = {
+            "generation": 0,
+            "best_fitness": 0.0,
+            "avg_fitness": 0.0,
+            "active_dummies": 0,
+            "species_count": 0,
+            "time_elapsed": 0.0,
+            "species_sizes": []
+        }
+
+    def update_stats(self, stats_dict: dict):
+        """Update the stats to be displayed on screen."""
+        self.stats.update(stats_dict)
 
     def process_events(self) -> None:
         """Handles Pygame events, like closing the window."""
@@ -106,6 +125,9 @@ class Visualizer:
         # Flip screen vertically (Pygame Y is inverted relative to Pymunk)
         flipped_surface = pygame.transform.flip(self.screen, False, True)
         self.screen.blit(flipped_surface, (0, 0))
+        
+        # Draw stats on the right side of the screen
+        self._draw_stats()
 
         # Update display
         pygame.display.flip()
@@ -114,6 +136,72 @@ class Visualizer:
         self.clock.tick(self.fps)
 
         return True # Continue running
+    
+    def _draw_stats(self):
+        """Draw evolution stats on the right side of the screen."""
+        # Stats panel background
+        panel_width = 350
+        panel_x = self.width - panel_width
+        panel_rect = pygame.Rect(panel_x, 0, panel_width, self.height)
+        pygame.draw.rect(self.screen, (30, 30, 30, 200), panel_rect)
+        pygame.draw.rect(self.screen, (200, 200, 200), panel_rect, 2)
+        
+        # Header
+        title = self.header_font.render("NEAT Evolution Stats", True, (220, 220, 220))
+        self.screen.blit(title, (panel_x + 10, 20))
+        
+        # Draw horizontal line
+        pygame.draw.line(self.screen, (200, 200, 200), 
+                         (panel_x + 5, 60), 
+                         (panel_x + panel_width - 5, 60), 2)
+        
+        # Core stats
+        y_pos = 80
+        line_height = 35
+        
+        stats_to_display = [
+            ("Generation:", f"{self.stats['generation']}"),
+            ("Best Fitness:", f"{self.stats['best_fitness']:.2f}"),
+            ("Avg Fitness:", f"{self.stats['avg_fitness']:.2f}"),
+            ("Active Dummies:", f"{self.stats['active_dummies']}"),
+            ("Species Count:", f"{self.stats['species_count']}"),
+            ("Time Elapsed:", f"{self.stats['time_elapsed']:.2f}s")
+        ]
+        
+        for label, value in stats_to_display:
+            label_surf = self.font.render(label, True, (220, 220, 220))
+            value_surf = self.font.render(value, True, (255, 255, 100))
+            self.screen.blit(label_surf, (panel_x + 15, y_pos))
+            self.screen.blit(value_surf, (panel_x + 210, y_pos))
+            y_pos += line_height
+        
+        # Draw horizontal line
+        pygame.draw.line(self.screen, (200, 200, 200), 
+                         (panel_x + 5, y_pos), 
+                         (panel_x + panel_width - 5, y_pos), 2)
+        
+        # Species breakdown header
+        y_pos += 20
+        species_header = self.header_font.render("Species Sizes", True, (220, 220, 220))
+        self.screen.blit(species_header, (panel_x + 10, y_pos))
+        y_pos += 40
+        
+        # Species breakdown
+        for i, (species_id, size, stagnation) in enumerate(self.stats.get('species_sizes', [])):
+            if i > 8:  # Limit to showing 9 species
+                more_text = self.font.render(f"... and {len(self.stats['species_sizes']) - 9} more", 
+                                            True, (180, 180, 180))
+                self.screen.blit(more_text, (panel_x + 15, y_pos))
+                break
+                
+            color = (180, 180, 180)
+            if stagnation > 10:  # Highlight stagnating species
+                color = (220, 150, 150)
+                
+            species_text = self.font.render(f"Species {species_id}: {size} members (stag: {stagnation})", 
+                                          True, color)
+            self.screen.blit(species_text, (panel_x + 15, y_pos))
+            y_pos += 30
 
     def close(self) -> None:
         """Shuts down Pygame."""

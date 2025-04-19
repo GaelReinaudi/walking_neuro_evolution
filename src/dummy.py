@@ -32,7 +32,15 @@ class Dummy:
         # Sensor placeholders (update these properly later)
         self.r_foot_contact = False
         self.l_foot_contact = False
+        # Adding hand contact sensors
+        self.r_hand_contact = False
+        self.l_hand_contact = False
         self.final_x: float | None = None # Store final X position when hit
+        
+        # Track previous angles for calculating angular velocities
+        self.prev_angles = {}
+        # Track motor forces
+        self.motor_forces = [0.0, 0.0, 0.0, 0.0]  # r_shoulder, l_shoulder, r_hip, l_hip
 
         # --- Define body part dimensions and masses ---
         body_mass = 10
@@ -184,30 +192,86 @@ class Dummy:
             print(f"Warning: Mismatch between rates provided ({len(rates)}) and motors ({len(self.motors)}) for Dummy {self.id}")
             return
 
-        for motor, rate_input in zip(self.motors, rates):
+        for i, (motor, rate_input) in enumerate(zip(self.motors, rates)):
+            # Calculate and store the actual force being applied
+            if hasattr(motor, 'force'):
+                self.motor_forces[i] = abs(motor.force) / MOTOR_MAX_FORCE  # Normalize to [0, 1]
             motor.rate = rate_input * MOTOR_RATE
+
+    def get_angular_velocities(self) -> list[float]:
+        """Calculate angular velocities for all joints (normalized)."""
+        if self.is_hit:
+            return [0.0] * 4
+            
+        # Calculate current angular velocities
+        body_velocity = self.body.angular_velocity
+        r_arm_velocity = self.r_arm.angular_velocity - body_velocity
+        l_arm_velocity = self.l_arm.angular_velocity - body_velocity
+        r_leg_velocity = self.r_leg.angular_velocity - body_velocity
+        l_leg_velocity = self.l_leg.angular_velocity - body_velocity
+        
+        # Normalize by max angular velocity (MOTOR_RATE)
+        max_velocity = MOTOR_RATE * 1.5  # A bit higher than max rate to avoid clipping
+        r_arm_norm = max(-1.0, min(1.0, r_arm_velocity / max_velocity))
+        l_arm_norm = max(-1.0, min(1.0, l_arm_velocity / max_velocity))
+        r_leg_norm = max(-1.0, min(1.0, r_leg_velocity / max_velocity))
+        l_leg_norm = max(-1.0, min(1.0, l_leg_velocity / max_velocity))
+        
+        return [r_arm_norm, l_arm_norm, r_leg_norm, l_leg_norm]
 
     # --- Sensor Data ---
     def get_sensor_data(self) -> list[float]:
         """Collects and returns sensor data for the neural network.
 
         Returns:
-            A list of sensor values (e.g., relative angles, contact flags).
-            Order: r_shoulder_angle, l_shoulder_angle, r_hip_angle, l_hip_angle,
-                   r_foot_contact, l_foot_contact
+            A list of sensor values in the following order:
+            - Relative joint angles (4): r_shoulder, l_shoulder, r_hip, l_hip
+            - Absolute body angles (5): body, r_arm, l_arm, r_leg, l_leg
+            - Joint angular velocities (4): r_shoulder, l_shoulder, r_hip, l_hip
+            - Motor forces (4): r_shoulder, l_shoulder, r_hip, l_hip
+            - Contact flags (4): r_foot_contact, l_foot_contact, r_hand_contact, l_hand_contact
         """
         # Return default/zero sensors if hit, as parts may be gone
         if self.is_hit:
-            return [0.0] * 6 # Match expected sensor count
+            return [0.0] * 21  # Updated sensor count
 
-        sensors: list[float] = []
+        # Get body reference angle for relative angles
         body_angle = self.body.angle
-        sensors.append(self.r_arm.angle - body_angle)
-        sensors.append(self.l_arm.angle - body_angle)
-        sensors.append(self.r_leg.angle - body_angle)
-        sensors.append(self.l_leg.angle - body_angle)
-        sensors.append(1.0 if self.r_foot_contact else 0.0)
-        sensors.append(1.0 if self.l_foot_contact else 0.0)
+        
+        # 1-4: Relative joint angles (normalized by dividing by π)
+        r_shoulder_angle = (self.r_arm.angle - body_angle) / math.pi
+        l_shoulder_angle = (self.l_arm.angle - body_angle) / math.pi
+        r_hip_angle = (self.r_leg.angle - body_angle) / math.pi
+        l_hip_angle = (self.l_leg.angle - body_angle) / math.pi
+        
+        # 5-9: Absolute angles (normalized by dividing by 2π)
+        # These give the neural network information about the absolute orientation of body parts
+        body_abs_angle = self.body.angle / (2 * math.pi)
+        r_arm_abs_angle = self.r_arm.angle / (2 * math.pi)
+        l_arm_abs_angle = self.l_arm.angle / (2 * math.pi)
+        r_leg_abs_angle = self.r_leg.angle / (2 * math.pi)
+        l_leg_abs_angle = self.l_leg.angle / (2 * math.pi)
+        
+        # 10-13: Angular velocities (normalized)
+        angular_velocities = self.get_angular_velocities()
+        
+        # 14-17: Motor forces (normalized)
+        motor_forces = self.motor_forces
+        
+        # 18-21: Contact sensors
+        r_foot_contact = 1.0 if self.r_foot_contact else 0.0
+        l_foot_contact = 1.0 if self.l_foot_contact else 0.0
+        r_hand_contact = 1.0 if self.r_hand_contact else 0.0
+        l_hand_contact = 1.0 if self.l_hand_contact else 0.0
+        
+        sensors = [
+            r_shoulder_angle, l_shoulder_angle, r_hip_angle, l_hip_angle,
+            body_abs_angle, r_arm_abs_angle, l_arm_abs_angle, r_leg_abs_angle, l_leg_abs_angle,
+            angular_velocities[0], angular_velocities[1], angular_velocities[2], angular_velocities[3],
+            motor_forces[0], motor_forces[1], motor_forces[2], motor_forces[3],
+            r_foot_contact, l_foot_contact, r_hand_contact, l_hand_contact
+        ]
+        
         return sensors
 
     # --- Hit State --- 
