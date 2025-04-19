@@ -60,6 +60,9 @@ class Visualizer:
         
         # Toggle for network display - ON by default to show it right away
         self.show_network = True
+        
+        # Camera should be fixed until laser reaches this x coordinate
+        self.camera_pan_threshold = 100
 
     def update_stats(self, stats_dict: dict):
         """Update the stats to be displayed on screen."""
@@ -105,59 +108,54 @@ class Visualizer:
             return False
 
         # --- Update Camera --- 
-        # Find the rightmost dummy
-        rightmost_x = None
-        rightmost_dummy = None
-        
-        # Find all dummies in the space
-        dummies_in_space = [shape.user_data for shape in sim.space.shapes 
-                          if hasattr(shape, 'user_data') and hasattr(shape.user_data, 'get_body_position')]
-        
-        # Get unique dummy instances
-        unique_dummies = list(set(dummies_in_space))
-        
-        # Find the rightmost one
-        for dummy in unique_dummies:
-            pos = dummy.get_body_position()
-            if rightmost_x is None or pos.x > rightmost_x:
-                rightmost_x = pos.x
-                rightmost_dummy = dummy
-        
-        # Camera follows the rightmost dummy if one exists, otherwise fallback to laser
-        if rightmost_dummy:
-            target_x = rightmost_dummy.get_body_position().x - (self.width * 0.25) / self.zoom  # Adjusted to position dummy more to the left
-            self.camera_offset_x = target_x
-        elif sim.laser_body:
-            # Fallback to laser if no dummies exist
-            target_x = sim.laser_body.position.x - (self.width * 0.02) / self.zoom  # Keep laser closer to the left edge
-            self.camera_offset_x = target_x
+        # Get the laser position directly from simulation
+        laser_x = 0
+        if hasattr(sim, 'laser_body') and sim.laser_body:
+            laser_x = sim.laser_body.position.x
+                    
+        # Explicitly force camera to follow laser after threshold
+        if laser_x >= self.camera_pan_threshold:
+            # Camera follows laser position - this is what creates the panning effect
+            self.camera_offset_x = laser_x - self.camera_pan_threshold
+        else:
+            # Fixed position at start
+            self.camera_offset_x = 0
 
         # Fixed Y offset to keep ground visible
         self.camera_offset_y = CAMERA_Y_OFFSET
 
-        # Create the transformation matrix with zoom
-        # Pymunk positive Y is up, Pygame positive Y is down.
-        # Pygame also draws from top-left. Pymunk default origin is bottom-left.
-        # Need translation AND scaling (to flip Y)
+        # --- Prepare Transformation ---
+        # Create the transformation matrix with zoom and camera offset
         cam_transform = pymunk.Transform.translation(-self.camera_offset_x, -self.camera_offset_y)
-        # Apply zoom by creating a scaling transform and combining with translation
+        # Apply zoom 
         scale = self.zoom
-        cam_transform = pymunk.Transform(scale, 0, 0, scale, cam_transform.tx, cam_transform.ty)
-        # We handle the Y-flip later by flipping the final surface
+        cam_transform = pymunk.Transform(scale, 0, 0, scale, cam_transform.tx * scale, cam_transform.ty * scale)
+        # Apply to draw options
         self.draw_options.transform = cam_transform
 
-        # --- Draw --- 
+        # --- Draw Scene --- 
         # Clear screen
         self.screen.fill(pygame.Color("lightblue"))
 
-        # Draw the space using the updated transform
+        # Draw a vertical red line at x=100 (in world coordinates) for debugging
+        x_marker = 100
+        screen_x = (x_marker - self.camera_offset_x) * self.zoom
+        pygame.draw.line(
+            self.screen,
+            (255, 0, 0),  # Red
+            (screen_x, 0),
+            (screen_x, self.height),
+            3
+        )
+
+        # Draw the space with physics objects
         sim.space.debug_draw(self.draw_options)
 
-        # Flip screen vertically (Pygame Y is inverted relative to Pymunk)
+        # Flip screen vertically (Pymunk Y is inverted relative to Pygame)
         flipped_surface = pygame.transform.flip(self.screen, False, True)
         self.screen.blit(flipped_surface, (0, 0))
         
-        # Draw stats on the right side of the screen
+        # Draw stats and UI elements (after the flip, so they're not flipped)
         self._draw_stats()
         
         # Always show the instruction for toggling network view
