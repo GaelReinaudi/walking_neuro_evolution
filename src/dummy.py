@@ -7,7 +7,7 @@ import random # For default color
 
 # Constants for motors
 MOTOR_RATE = 5 # Max angular velocity (rad/s)
-MOTOR_MAX_FORCE = 500000 # Max force the motor can apply
+MOTOR_MAX_FORCE = 1000000 # Max force the motor can apply
 EXPLOSION_IMPULSE = 150 # Adjust this value for bigger/smaller explosions
 
 class Dummy:

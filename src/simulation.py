@@ -8,6 +8,9 @@ from dummy import Dummy
 import neat
 import math
 import time # For limiting generation time
+import os
+import concurrent.futures
+import copy
 
 # Collision Types
 COLLISION_TYPE_DUMMY = 1
@@ -15,7 +18,7 @@ COLLISION_TYPE_LASER = 2
 COLLISION_TYPE_GROUND = 3
 COLLISION_TYPE_DEBRIS = 4 # New type for explosion parts
 
-LASER_SPEED = 50.0 # Pixels per second - doubled for faster laser movement
+LASER_SPEED = 150.0 # Pixels per second - doubled for faster laser movement
 # Adjust laser start X to be closer, e.g., just left of the typical screen view
 LASER_START_X = -20
 LASER_HEIGHT = 800 # Make it tall
@@ -54,8 +57,8 @@ class Simulation:
         """Allows associating a visualizer for drawing during run_generation."""
         self.viz = viz
 
-    def _clear_simulation_state(self):
-        """Removes all dynamic elements (dummies, debris) from the space."""
+    def _clear_simulation_state(self, remove_dummies=True):
+        """Removes all dynamic elements from the space."""
         # Remove debris first
         while self.debris_bodies:
             body = self.debris_bodies.pop()
@@ -63,14 +66,15 @@ class Simulation:
             if shape in self.space.shapes: self.space.remove(shape)
             if body in self.space.bodies: self.space.remove(body)
         
-        # Remove any remaining dummies (important if generation ends early)
-        # Need to get dummies directly from space as internal lists are cleared per-generation
-        dummies_in_space = [shape.user_data for shape in self.space.shapes 
+        # Remove any remaining dummies if requested
+        if remove_dummies:
+            # Need to get dummies directly from space
+            dummies_in_space = [shape.user_data for shape in self.space.shapes 
                             if hasattr(shape, 'user_data') and isinstance(shape.user_data, Dummy)]
-        unique_dummies = list(set(dummies_in_space)) # Get unique dummy instances
-        for dummy in unique_dummies:
-            if isinstance(dummy, Dummy): # Type check
-                dummy.remove_from_space()
+            unique_dummies = list(set(dummies_in_space)) # Get unique dummy instances
+            for dummy in unique_dummies:
+                if isinstance(dummy, Dummy): # Type check
+                    dummy.remove_from_space()
 
     def _reset_laser(self):
         """Resets the laser to its starting position and velocity."""
@@ -242,101 +246,51 @@ class Simulation:
         # Track previous fitness for comparison
         previous_fitness = {genome_id: genome.fitness for genome_id, genome in genomes}
         
-        dummies_this_gen: dict[int, Dummy] = {} # genome_id -> Dummy instance
-        networks_this_gen: dict[int, neat.nn.FeedForwardNetwork] = {} # genome_id -> network
-        active_genomes = len(genomes)
         start_time = time.time()
         
-        # Tracking metrics for each dummy
-        survival_frames: dict[int, int] = {}  # genome_id -> frame counter
-        movement_distances: dict[int, float] = {}  # genome_id -> distance moved
-        head_stability: dict[int, float] = {}  # genome_id -> head stability score
-
-        # Create dummies and networks for this generation
-        for genome_id, genome in genomes:
-            genome.fitness = 0 # Initialize fitness
-            net = neat.nn.FeedForwardNetwork.create(genome, config)
-            dummy_start_pos = (DEFAULT_DUMMY_START_POS[0], 
-                               DEFAULT_DUMMY_START_POS[1] + random.uniform(-20, 20)) # Slight vertical stagger
-            dummy = Dummy(self.space, dummy_start_pos, collision_type=COLLISION_TYPE_DUMMY)
+        # Check if we should use parallel processing or visualization
+        if self.viz and self.viz.running:
+            # Run with visualization (no parallel processing)
+            print("Running with visualization (no parallel processing)")
+            results = self._run_visual_simulation(genomes, config)
+        else:
+            # Run with parallel processing (no visualization)
+            # Determine CPU count for parallel processing
+            cpu_count = os.cpu_count()
+            num_processes = max(1, cpu_count - 1) if cpu_count else 4  # Leave 1 CPU free
+            print(f"Using {num_processes} processes for parallel simulation")
             
-            networks_this_gen[genome_id] = net
-            dummies_this_gen[genome_id] = dummy
-            survival_frames[genome_id] = 0  # Initialize frame counter (instead of time)
-            movement_distances[genome_id] = 0.0  # Initialize movement distance
-            head_stability[genome_id] = 0.0  # Initialize head stability score
-
-        # --- Simulation Loop for this Generation --- 
-        while active_genomes > 0:
-            # Check for visualization exit requests
-            if self.viz and not self.viz.running:
-                # If user closes window during eval, stop the generation early
-                print("Visualizer closed, ending generation early.")
-                break
-
-            # Update NNs and step physics
-            current_active = 0
-            for genome_id, genome in genomes:
-                dummy = dummies_this_gen.get(genome_id)
-                if dummy and not dummy.is_hit:
-                    current_active += 1
-                    # Increment frame counter for active dummies (instead of time)
-                    survival_frames[genome_id] += 1
-                    
-                    # Calculate movement (distance from start position)
-                    current_pos = dummy.get_body_position()
-                    distance_moved = abs(current_pos.x - dummy.initial_position.x)
-                    movement_distances[genome_id] = max(movement_distances[genome_id], distance_moved)
-                    
-                    # Track head stability (how close to upright the head stays)
-                    if hasattr(dummy, 'head'):
-                        # Calculate deviation from upright position (head angle should be close to 0)
-                        head_angle = abs(dummy.head.angle % (2 * math.pi))
-                        # Convert to [0, 1] where 1 means perfectly upright
-                        stability_score = 1.0 - min(1.0, head_angle / math.pi)
-                        # Accumulate stability score per frame (not per time)
-                        head_stability[genome_id] += stability_score
-                    
-                    try:
-                        net = networks_this_gen[genome_id]
-                        sensor_values = dummy.get_sensor_data()
-                        motor_outputs = net.activate(sensor_values)
-                        dummy.set_motor_rates(motor_outputs)
-                    except Exception as e:
-                        print(f"Error activating network for genome {genome_id} (Dummy {dummy.id}): {e}")
-                        # Mark as hit on error?
-                        hit_pos = dummy.mark_as_hit()
-                        if hit_pos: self._create_explosion(hit_pos)
-                        dummy.remove_from_space() # Remove on error
-                        
-            # Update active count
-            active_genomes = current_active
-
-            # Step physics
-            self.space.step(SIM_DT)
-
-            # Cleanup debris
-            self._cleanup_debris()
-
-            # Update visualization if attached
-            if self.viz:
-                viz_result = self.viz.draw(self)
-                if not viz_result:
-                    # Stop generation immediately if visualizer quit
-                    print("Visualizer signaled to stop immediately")
-                    # End the generation
+            # Prepare inputs for parallel processing
+            genome_configs = [(genome_id, genome, config) for genome_id, genome in genomes]
+            
+            # Run simulations in parallel
+            with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
+                futures = [executor.submit(_simulate_dummy, gc) for gc in genome_configs]
+                results = [future.result() for future in concurrent.futures.as_completed(futures)]
+        
+        # Process results
+        fitness_values = {}
+        survival_frames = {}
+        movement_distances = {}
+        head_stability = {}
+        
+        for result in results:
+            genome_id, fitness, frames, distance, stability = result
+            fitness_values[genome_id] = fitness
+            survival_frames[genome_id] = frames
+            movement_distances[genome_id] = distance
+            head_stability[genome_id] = stability
+            
+            # Assign fitness back to genomes
+            for gid, genome in genomes:
+                if gid == genome_id:
+                    genome.fitness = fitness
                     break
-            
-        # --- End of Generation Loop --- 
+        
         total_sim_time = time.time() - start_time
-        print(f"Generation finished. Time: {total_sim_time:.2f}s. Active dummies remaining: {active_genomes}")
-
-        # If visualizer was closed, just return without calculating fitness
-        if self.viz and not self.viz.running:
-            print("Skipping fitness calculation as visualizer was closed")
-            return
-
-        # Calculate fitness for all genomes in this generation
+        print(f"Generation finished. Time: {total_sim_time:.2f}s. Evaluated {len(genomes)} genomes.")
+        
+        # --- Report Results ---
         # Sort genomes by survival time to identify top performers
         survival_ranking = sorted([(genome_id, frames) for genome_id, frames in survival_frames.items()], 
                                  key=lambda x: x[1], reverse=True)
@@ -347,18 +301,11 @@ class Simulation:
         
         fitness_changes = []
         for genome_id, genome in genomes:
-            # Base fitness = how long the dummy survived - ONLY metric
-            survival_frames_count = survival_frames.get(genome_id, 0)
-            
-            # Set fitness directly to survival frames
-            fitness = survival_frames_count
-            
-            # Final assignment
-            genome.fitness = fitness
-            
             # Track fitness changes for logging
-            fitness_change = fitness - (previous_fitness.get(genome_id, 0.0) or 0.0)
-            fitness_changes.append((genome_id, fitness, fitness_change))
+            previous = previous_fitness.get(genome_id, 0.0) or 0.0
+            current = fitness_values.get(genome_id, 0.0)
+            fitness_change = current - previous
+            fitness_changes.append((genome_id, current, fitness_change))
         
         # Log fitness stats to verify evolution is happening
         fitness_changes.sort(key=lambda x: x[1], reverse=True)
@@ -368,15 +315,253 @@ class Simulation:
         print(f"Top 10 performers:")
         for i, (gid, fit, change) in enumerate(top_10):
             change_str = f"+{change:.1f}" if change > 0 else f"{change:.1f}"
-            dummy = dummies_this_gen.get(gid)
-            status = "Survived" if (dummy and not dummy.is_hit) else "Hit"
             surv_frames = survival_frames.get(gid, 0)
-            print(f"  #{i+1}: Genome {gid} - Frames: {surv_frames} - Fitness: {fit:.1f} ({change_str}) - {status}")
+            print(f"  #{i+1}: Genome {gid} - Frames: {surv_frames} - Fitness: {fit:.1f} ({change_str}) - Hit")
             
         # Calculate average fitness change
         avg_change = sum(change for _, _, change in fitness_changes) / len(fitness_changes)
         print(f"Average fitness change: {avg_change:+.2f}")
         print("=====================\n")
+        
+    def _run_visual_simulation(self, genomes, config):
+        """Run the simulation with visualization for all genomes."""
+        results = []
+        
+        dummies_this_gen = {}  # genome_id -> Dummy instance
+        networks_this_gen = {}  # genome_id -> network
+        active_genomes = len(genomes)
+        
+        # Tracking metrics for each dummy
+        survival_frames = {}  # genome_id -> frame counter
+        movement_distances = {}  # genome_id -> distance moved
+        head_stability = {}  # genome_id -> head stability score
+        
+        # Create dummies and networks for this generation
+        for genome_id, genome in genomes:
+            genome.fitness = 0  # Initialize fitness
+            net = neat.nn.FeedForwardNetwork.create(genome, config)
+            dummy_start_pos = (DEFAULT_DUMMY_START_POS[0], 
+                               DEFAULT_DUMMY_START_POS[1] + random.uniform(-20, 20))
+            dummy = Dummy(self.space, dummy_start_pos, collision_type=COLLISION_TYPE_DUMMY)
+            
+            networks_this_gen[genome_id] = net
+            dummies_this_gen[genome_id] = dummy
+            survival_frames[genome_id] = 0  # Initialize frame counter
+            movement_distances[genome_id] = 0.0  # Initialize movement distance
+            head_stability[genome_id] = 0.0  # Initialize head stability score
+        
+        # Simulation loop
+        while active_genomes > 0:
+            # Check for visualization exit requests
+            if not self.viz.running:
+                print("Visualizer closed, ending generation early.")
+                break
+            
+            # Update NNs and step physics
+            current_active = 0
+            for genome_id, genome in genomes:
+                dummy = dummies_this_gen.get(genome_id)
+                if dummy and not dummy.is_hit:
+                    current_active += 1
+                    # Increment frame counter
+                    survival_frames[genome_id] += 1
+                    
+                    # Calculate movement distance
+                    current_pos = dummy.get_body_position()
+                    distance_moved = abs(current_pos.x - dummy.initial_position.x)
+                    movement_distances[genome_id] = max(movement_distances[genome_id], distance_moved)
+                    
+                    # Calculate head stability
+                    if hasattr(dummy, 'head'):
+                        head_angle = abs(dummy.head.angle % (2 * math.pi))
+                        stability_score = 1.0 - min(1.0, head_angle / math.pi)
+                        head_stability[genome_id] += stability_score
+                    
+                    # Update neural network
+                    try:
+                        net = networks_this_gen[genome_id]
+                        sensor_values = dummy.get_sensor_data()
+                        motor_outputs = net.activate(sensor_values)
+                        dummy.set_motor_rates(motor_outputs)
+                    except Exception as e:
+                        print(f"Error activating network for genome {genome_id}: {e}")
+                        hit_pos = dummy.mark_as_hit()
+                        if hit_pos:
+                            self._create_explosion(hit_pos)
+                        dummy.remove_from_space()
+            
+            # Update active count
+            active_genomes = current_active
+            
+            # Step physics
+            self.space.step(SIM_DT)
+            
+            # Cleanup debris
+            self._cleanup_debris()
+            
+            # Update visualization
+            self.viz.draw(self)
+        
+        # Prepare results in the same format as parallel simulation
+        for genome_id in dummies_this_gen:
+            frames = survival_frames.get(genome_id, 0)
+            distance = movement_distances.get(genome_id, 0.0)
+            stability = head_stability.get(genome_id, 0.0)
+            fitness = float(frames)  # Fitness is just the frame count
+            results.append((genome_id, fitness, frames, distance, stability))
+        
+        return results
+
+    def _simulate_dummy(genome_config):
+        """Run simulation for a single dummy in isolation.
+        
+        Args:
+            genome_config: Tuple of (genome_id, genome, config)
+            
+        Returns:
+            Tuple of (genome_id, fitness, frames, distance, stability)
+        """
+        genome_id, genome, config = genome_config
+        
+        # Create a separate simulation space for this dummy
+        local_space = pymunk.Space()
+        local_space.gravity = (0, -981.0)  # Same gravity as main simulation
+        
+        # Add ground
+        ground = pymunk.Segment(local_space.static_body, (-5000, 10), (5000, 10), 5)
+        ground.friction = 0.8
+        ground.elasticity = 0.5
+        ground.collision_type = COLLISION_TYPE_GROUND
+        ground.filter = pymunk.ShapeFilter(categories=0b100, mask=0b001)
+        local_space.add(ground)
+        
+        # Add laser
+        laser_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
+        laser_body.position = (LASER_START_X, LASER_HEIGHT / 2)
+        laser_body.velocity = (LASER_SPEED, 0)
+        laser_shape = pymunk.Poly.create_box(laser_body, (LASER_WIDTH, LASER_HEIGHT))
+        laser_shape.sensor = True
+        laser_shape.collision_type = COLLISION_TYPE_LASER
+        laser_shape.color = (255, 0, 0, 255)
+        laser_shape.filter = pymunk.ShapeFilter(categories=0b1000, mask=0b001)
+        local_space.add(laser_body, laser_shape)
+        
+        # Setup collision handlers
+        def _local_laser_hit_dummy(arbiter, space, data):
+            for shape in arbiter.shapes:
+                if shape.collision_type == COLLISION_TYPE_DUMMY:
+                    dummy_shape = shape
+                    if hasattr(dummy_shape, 'user_data') and isinstance(dummy_shape.user_data, Dummy):
+                        dummy_shape.user_data.mark_as_hit()
+                        return True
+            return True
+            
+        def _local_head_ground_collision(arbiter, space, data):
+            for shape in arbiter.shapes:
+                if shape.collision_type == COLLISION_TYPE_DUMMY:
+                    dummy_shape = shape
+                    if hasattr(dummy_shape, 'user_data') and isinstance(dummy_shape.user_data, Dummy):
+                        dummy = dummy_shape.user_data
+                        if dummy_shape.body == dummy.head:
+                            dummy.mark_as_hit()
+                            return True
+            return True
+            
+        handler = local_space.add_collision_handler(COLLISION_TYPE_LASER, COLLISION_TYPE_DUMMY)
+        handler.begin = _local_laser_hit_dummy
+        
+        ground_handler = local_space.add_collision_handler(COLLISION_TYPE_GROUND, COLLISION_TYPE_DUMMY)
+        ground_handler.begin = _local_head_ground_collision
+        
+        # Create dummy
+        dummy_start_pos = (DEFAULT_DUMMY_START_POS[0], 
+                          DEFAULT_DUMMY_START_POS[1] + random.uniform(-20, 20))
+        dummy = Dummy(local_space, dummy_start_pos, collision_type=COLLISION_TYPE_DUMMY)
+        
+        # Create neural network
+        net = neat.nn.FeedForwardNetwork.create(genome, config)
+        
+        # Simulation variables
+        survival_frames = 0
+        movement_distance = 0.0
+        head_stability = 0.0
+        max_frames = 2000  # Safety limit to prevent infinite loops
+        
+        # Simulation loop
+        while not dummy.is_hit and survival_frames < max_frames:
+            # Get sensor data and activate network
+            sensor_values = dummy.get_sensor_data()
+            motor_outputs = net.activate(sensor_values)
+            dummy.set_motor_rates(motor_outputs)
+            
+            # Step physics
+            local_space.step(SIM_DT)
+            
+            # Update metrics
+            survival_frames += 1
+            
+            # Calculate movement distance
+            current_pos = dummy.get_body_position()
+            movement_distance = max(movement_distance, abs(current_pos.x - dummy.initial_position.x))
+            
+            # Calculate head stability
+            if hasattr(dummy, 'head'):
+                head_angle = abs(dummy.head.angle % (2 * math.pi))
+                stability_score = 1.0 - min(1.0, head_angle / math.pi)
+                head_stability += stability_score
+            
+            # Check if laser has passed the dummy
+            if laser_body.position.x > current_pos.x + 100:
+                # Dummy has survived the laser
+                break
+        
+        # Calculate fitness (frames survived)
+        fitness = float(survival_frames)
+        
+        # Clean up
+        for shape in list(local_space.shapes):
+            if shape.body:
+                local_space.remove(shape)
+            
+        for body in list(local_space.bodies):
+            if body != local_space.static_body:
+                local_space.remove(body)
+        
+        return genome_id, fitness, survival_frames, movement_distance, head_stability
+        
+    def _update_visualization(self, genome_id, genome, config):
+        """Run a single dummy in the main simulation for visualization."""
+        if not self.viz or not self.viz.running:
+            return
+            
+        # Create a dummy for visualization
+        dummy_start_pos = (DEFAULT_DUMMY_START_POS[0], DEFAULT_DUMMY_START_POS[1])
+        dummy = Dummy(self.space, dummy_start_pos, collision_type=COLLISION_TYPE_DUMMY)
+        
+        # Create neural network
+        net = neat.nn.FeedForwardNetwork.create(genome, config)
+        
+        # Visualization loop
+        frames = 0
+        max_frames = 500  # Limit for visualization
+        
+        while not dummy.is_hit and frames < max_frames and self.viz.running:
+            # Get sensor data and activate network
+            sensor_values = dummy.get_sensor_data()
+            motor_outputs = net.activate(sensor_values)
+            dummy.set_motor_rates(motor_outputs)
+            
+            # Step physics
+            self.space.step(SIM_DT)
+            
+            # Update visualization
+            self.viz.draw(self)
+            
+            frames += 1
+            
+        # Clean up
+        dummy.remove_from_space()
+        self._clear_simulation_state()
     
     # --- Removed Methods --- 
     # reset() method is removed - restarting logic now in main.py if needed
