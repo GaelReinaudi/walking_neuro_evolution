@@ -215,7 +215,7 @@ def run_neat(config_file: str):
         p.add_reporter(EvolutionDebugReporter())
     
     # Optional: Checkpointer to save progress
-    p.add_reporter(neat.Checkpointer(5, filename_prefix='neat-checkpoint-'))
+    p.add_reporter(neat.Checkpointer(5, filename_prefix='checkpoints/neat-checkpoint-'))
 
     winner = p.run(eval_genomes, NUM_GENERATIONS)
 

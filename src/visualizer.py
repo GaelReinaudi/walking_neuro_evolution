@@ -66,18 +66,20 @@ class Visualizer:
         # Camera should be fixed until laser reaches this x coordinate
         self.camera_pan_threshold = 120
         
-        # Load the face image for the laser
-        try:
-            image_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'images', 'face.png')
-            self.face_image = pygame.image.load(image_path)
-            self.face_image = pygame.transform.scale(self.face_image, (50, 50))  # Adjust size as needed
-            print(f"Loaded face image from {image_path}")
-        except Exception as e:
-            print(f"Error loading face image: {e}")
-            self.face_image = None
-            
         # Create a texture for the ground
         self.ground_texture = self._create_ground_texture()
+        
+        # Load face image
+        face_path = os.path.join("images", "face.png")
+        try:
+            self.face_image = pygame.image.load(face_path)
+            # Scale the image much larger - twice as big as before
+            self.face_image = pygame.transform.scale(self.face_image, (72, 72))
+            self.face_loaded = True
+            print(f"Face image loaded from {face_path}")
+        except Exception as e:
+            print(f"Failed to load face image: {e}")
+            self.face_loaded = False
 
     def _create_ground_texture(self, width=200, height=20):
         """Create a repeatable texture for the ground."""
@@ -203,16 +205,10 @@ class Visualizer:
         # Draw the space with physics objects
         sim.space.debug_draw(self.draw_options)
         
-        # Draw face image at laser position if available
-        if self.face_image and hasattr(sim, 'laser_body') and sim.laser_body:
-            laser_pos = sim.laser_body.position
-            screen_laser_x = (laser_pos.x - self.camera_offset_x) * self.zoom
-            screen_laser_y = (laser_pos.y - self.camera_offset_y) * self.zoom
-            # Adjust position to center the image on the laser
-            image_rect = self.face_image.get_rect()
-            image_rect.center = (screen_laser_x, screen_laser_y)
-            self.screen.blit(self.face_image, image_rect)
-
+        # Draw face images on dummies (before flipping the screen)
+        if self.face_loaded:
+            self._draw_dummy_faces(sim)
+        
         # Flip screen vertically (Pymunk Y is inverted relative to Pygame)
         flipped_surface = pygame.transform.flip(self.screen, False, True)
         self.screen.blit(flipped_surface, (0, 0))
@@ -244,6 +240,44 @@ class Visualizer:
         self.clock.tick(self.fps)
 
         return True # Continue running
+    
+    def _draw_dummy_faces(self, sim):
+        """Draw face images on all dummies in the simulation."""
+        if not self.face_loaded:
+            return
+        
+        # Find all dummies in the simulation
+        dummies = []
+        for shape in sim.space.shapes:
+            if hasattr(shape, 'user_data') and hasattr(shape.user_data, 'head'):
+                dummy = shape.user_data
+                if dummy not in dummies and hasattr(dummy, 'head') and not dummy.is_hit:
+                    dummies.append(dummy)
+        
+        # Draw face on each dummy's head
+        for dummy in dummies:
+            # Get the head position in world coordinates
+            head_pos = dummy.head.position
+            
+            # Convert to screen coordinates with camera transform
+            screen_x = (head_pos.x - self.camera_offset_x) * self.zoom
+            screen_y = (head_pos.y - self.camera_offset_y) * self.zoom
+            
+            # Convert rotation angle (radians to degrees)
+            # Add 180 degrees to fix upside-down orientation
+            rotation_angle = -dummy.head.angle * 180.0 / 3.14159 + 180
+            
+            # Rotate the face image to match the head's rotation
+            rotated_face = pygame.transform.rotate(self.face_image, rotation_angle)
+            
+            # Center the image on the head position
+            rot_width = rotated_face.get_width()
+            rot_height = rotated_face.get_height()
+            screen_x -= rot_width / 2
+            screen_y -= rot_height / 2
+            
+            # Blit the face image
+            self.screen.blit(rotated_face, (screen_x, screen_y))
     
     def _draw_stats(self):
         """Draw evolution stats on the right side of the screen."""

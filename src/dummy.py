@@ -29,6 +29,8 @@ class Dummy:
         self.is_hit = False # Flag to indicate if hit by laser
         self.hit_color = (255, 0, 0, 255) # Red
         self.default_color = (random.randint(50, 200), random.randint(50, 200), random.randint(50, 200), 255)
+        # Head shape gets a transparent color
+        self.head_color = (0, 0, 0, 0)  # Completely transparent
         # Sensor placeholders (update these properly later)
         self.r_foot_contact = False
         self.l_foot_contact = False
@@ -86,7 +88,7 @@ class Dummy:
         self.body = self._create_part(body_mass, body_size, self.initial_position)
 
         # --- Create Head ---
-        self.head = self._create_part(head_mass, head_size, head_pos)
+        self.head = self._create_part(head_mass, head_size, head_pos, friction=0.8, is_head=True)
         # Use anchors relative to each body's center of gravity
         head_joint = pymunk.PivotJoint(self.body, self.head, head_joint_anchor_body, head_joint_anchor_head)
         head_joint.collide_bodies = False
@@ -191,7 +193,7 @@ class Dummy:
         # Add motors later if needed
 
 
-    def _create_part(self, mass: float, size: tuple[float, float], position: tuple[float, float] | Vec2d, friction: float = 0.8) -> pymunk.Body:
+    def _create_part(self, mass: float, size: tuple[float, float], position: tuple[float, float] | Vec2d, friction: float = 0.8, is_head: bool = False) -> pymunk.Body:
         """Helper function to create a rectangular body part, assign collision type, user_data, and color."""
         body = pymunk.Body(mass, pymunk.moment_for_box(mass, size))
         body.position = position
@@ -200,7 +202,17 @@ class Dummy:
         shape.filter = pymunk.ShapeFilter(group=1)
         shape.collision_type = self.collision_type
         shape.user_data = self # Store reference to this Dummy instance
-        shape.color = self.default_color # Assign initial color
+        
+        # Use transparent color for head, default color for other parts
+        if is_head:
+            # Make head completely invisible (transparent)
+            shape.color = (0, 0, 0, 0)  # RGBA with alpha=0
+            # Make head physically smaller than visual face image
+            # but keep physics accurate for collisions
+            shape.sensor = False  # Keep collision physics
+        else:
+            shape.color = self.default_color
+            
         self.space.add(body, shape)
         self.bodies.append(body)
         self.shapes.append(shape)
