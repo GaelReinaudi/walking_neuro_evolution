@@ -240,7 +240,7 @@ class Simulation:
         start_time = time.time()
         
         # Tracking metrics for each dummy
-        survival_times: dict[int, float] = {}  # genome_id -> survival time
+        survival_frames: dict[int, int] = {}  # genome_id -> frame counter
         movement_distances: dict[int, float] = {}  # genome_id -> distance moved
         head_stability: dict[int, float] = {}  # genome_id -> head stability score
 
@@ -254,12 +254,12 @@ class Simulation:
             
             networks_this_gen[genome_id] = net
             dummies_this_gen[genome_id] = dummy
-            survival_times[genome_id] = 0.0  # Initialize survival time
+            survival_frames[genome_id] = 0  # Initialize frame counter (instead of time)
             movement_distances[genome_id] = 0.0  # Initialize movement distance
             head_stability[genome_id] = 0.0  # Initialize head stability score
 
         # --- Simulation Loop for this Generation --- 
-        while active_genomes > 0:  # Continue until all dummies are hit
+        while active_genomes > 0:
             # Check for visualization exit requests
             if self.viz and not self.viz.running:
                 # If user closes window during eval, stop the generation early
@@ -272,8 +272,8 @@ class Simulation:
                 dummy = dummies_this_gen.get(genome_id)
                 if dummy and not dummy.is_hit:
                     current_active += 1
-                    # Update survival time for active dummies
-                    survival_times[genome_id] += SIM_DT
+                    # Increment frame counter for active dummies (instead of time)
+                    survival_frames[genome_id] += 1
                     
                     # Calculate movement (distance from start position)
                     current_pos = dummy.get_body_position()
@@ -286,8 +286,8 @@ class Simulation:
                         head_angle = abs(dummy.head.angle % (2 * math.pi))
                         # Convert to [0, 1] where 1 means perfectly upright
                         stability_score = 1.0 - min(1.0, head_angle / math.pi)
-                        # Accumulate stability score
-                        head_stability[genome_id] += stability_score * SIM_DT
+                        # Accumulate stability score per frame (not per time)
+                        head_stability[genome_id] += stability_score
                     
                     try:
                         net = networks_this_gen[genome_id]
@@ -330,7 +330,7 @@ class Simulation:
 
         # Calculate fitness for all genomes in this generation
         # Sort genomes by survival time to identify top performers
-        survival_ranking = sorted([(genome_id, time) for genome_id, time in survival_times.items()], 
+        survival_ranking = sorted([(genome_id, frames) for genome_id, frames in survival_frames.items()], 
                                  key=lambda x: x[1], reverse=True)
         
         # Get top 10% survivors for special bonus
@@ -340,10 +340,10 @@ class Simulation:
         fitness_changes = []
         for genome_id, genome in genomes:
             # Base fitness = how long the dummy survived - ONLY metric
-            survival_time = survival_times.get(genome_id, 0.0)
+            survival_frames_count = survival_frames.get(genome_id, 0)
             
-            # Set fitness directly to survival time
-            fitness = survival_time
+            # Set fitness directly to survival frames
+            fitness = survival_frames_count
             
             # Final assignment
             genome.fitness = fitness
@@ -362,8 +362,8 @@ class Simulation:
             change_str = f"+{change:.1f}" if change > 0 else f"{change:.1f}"
             dummy = dummies_this_gen.get(gid)
             status = "Survived" if (dummy and not dummy.is_hit) else "Hit"
-            surv_time = survival_times.get(gid, 0.0)
-            print(f"  #{i+1}: Genome {gid} - Time: {surv_time:.1f}s - Fitness: {fit:.1f} ({change_str}) - {status}")
+            surv_frames = survival_frames.get(gid, 0)
+            print(f"  #{i+1}: Genome {gid} - Frames: {surv_frames} - Fitness: {fit:.1f} ({change_str}) - {status}")
             
         # Calculate average fitness change
         avg_change = sum(change for _, _, change in fitness_changes) / len(fitness_changes)

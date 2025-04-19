@@ -25,6 +25,9 @@ stats_reporter = None  # Global reference to the stats reporter
 start_time = None  # Global time tracking
 current_generation = 0  # Track current generation
 
+# Debug mode
+DEBUG_EVOLUTION = False  # Set to False to run without debug output
+
 # Custom exception for graceful termination
 class VisualizerClosedException(Exception):
     """Raised when the user closes the visualizer window."""
@@ -111,7 +114,26 @@ def eval_genomes(genomes: list[tuple[int, neat.DefaultGenome]], config: neat.Con
 
     # --- Run the Simulation Generation --- 
     if simulation:
+        # Debug pre-evaluation fitness values
+        if DEBUG_EVOLUTION and current_generation > 1:
+            print(f"\n----- PRE-EVALUATION FITNESS VALUES (Gen {current_generation}) -----")
+            for i, (gid, genome) in enumerate(genomes[:10]):  # Show first 10 genomes
+                fitness = genome.fitness if genome.fitness is not None else "None"
+                print(f"Genome {gid}: Fitness = {fitness}")
+            print("...and more genomes")
+        
+        # Run simulation for the generation
         simulation.run_generation(genomes, config)
+        
+        # Debug post-evaluation fitness values
+        if DEBUG_EVOLUTION:
+            print(f"\n----- POST-EVALUATION FITNESS VALUES (Gen {current_generation}) -----")
+            # Sort genomes by fitness for better visualization
+            sorted_genomes = sorted(genomes, key=lambda x: x[1].fitness if x[1].fitness is not None else -float('inf'), reverse=True)
+            for i, (gid, genome) in enumerate(sorted_genomes[:10]):  # Show first 10 genomes
+                fitness = genome.fitness if genome.fitness is not None else "None"
+                print(f"Top {i+1}: Genome {gid}: Fitness = {fitness}")
+            print("...and more genomes")
     else:
         # Should not happen if initialization worked
         print("Error: Simulation object not initialized.")
@@ -127,6 +149,16 @@ def eval_genomes(genomes: list[tuple[int, neat.DefaultGenome]], config: neat.Con
          # Raise an exception to stop the current run
          raise VisualizerClosedException("User closed the visualizer")
 
+# Debug reporter for tracking detailed evolution information
+class EvolutionDebugReporter(neat.reporting.BaseReporter):
+    def post_reproduction(self, config, population, species_set):
+        """Called after reproduction occurs."""
+        print("\n----- REPRODUCTION COMPLETED -----")
+        print(f"Population size: {len(population)}")
+        print(f"Number of species: {len(species_set.species)}")
+        for sid, s in species_set.species.items():
+            print(f"  Species {sid}: {len(s.members)} members")
+        print("-------------------------------\n")
 
 def run_neat(config_file: str):
     """Sets up and runs the NEAT algorithm."""
@@ -146,8 +178,12 @@ def run_neat(config_file: str):
     p.add_reporter(stats)
     stats_reporter = stats  # Store for visualizer access
     
+    # Optional: Add a custom reporter to track more details
+    if DEBUG_EVOLUTION:
+        p.add_reporter(EvolutionDebugReporter())
+    
     # Optional: Checkpointer to save progress
-    # p.add_reporter(neat.Checkpointer(5, filename_prefix='neat-checkpoint-'))
+    p.add_reporter(neat.Checkpointer(5, filename_prefix='neat-checkpoint-'))
 
     # Run for up to NUM_GENERATIONS generations.
     try:
