@@ -48,7 +48,7 @@ class Dummy:
         body_mass = 10
         body_size = (30, 40) # Make body slightly taller
         head_mass = 2
-        head_size = (20, 20)
+        head_size = (2, 2)
         limb_mass = 1
         arm_size = (10, 35)
         leg_size = (10, 30)  # Shorter upper legs
@@ -218,7 +218,7 @@ class Dummy:
         # Use transparent color for head, default color for other parts
         if is_head:
             # Make head completely invisible (transparent)
-            shape.color = (0, 0, 0, 0)  # RGBA with alpha=0
+            shape.color = self.head_color
             # Make head physically smaller than visual face image
             # but keep physics accurate for collisions
             shape.sensor = False  # Keep collision physics

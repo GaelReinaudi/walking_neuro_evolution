@@ -74,7 +74,7 @@ class Visualizer:
         try:
             self.face_image = pygame.image.load(face_path)
             # Scale the image much larger - twice as big as before
-            self.face_image = pygame.transform.scale(self.face_image, (72, 72))
+            self.face_image = pygame.transform.scale(self.face_image, (144, 144))
             self.face_loaded = True
             print(f"Face image loaded from {face_path}")
         except Exception as e:
