@@ -7,7 +7,7 @@ import random # For default color
 
 # Constants for motors
 MOTOR_RATE = 10 # Max angular velocity (rad/s)
-MOTOR_MAX_FORCE = 1000000 # Max force the motor can apply
+MOTOR_MAX_FORCE = 2000000 # Max force the motor can apply
 EXPLOSION_IMPULSE = 150 # Adjust this value for bigger/smaller explosions
 
 class Dummy:
@@ -94,7 +94,19 @@ class Dummy:
         head_joint.collide_bodies = False
         self.space.add(head_joint)
         self.joints.append(head_joint)
-
+        
+        # Add head angle limit to prevent excessive head movement
+        # Limit head rotation to just ±30 degrees (π/6 radians) from the body angle
+        # Allow slightly more movement for a more natural look while still stable
+        head_limit = pymunk.RotaryLimitJoint(self.body, self.head, -math.pi/6, math.pi/6)
+        self.space.add(head_limit)
+        self.joints.append(head_limit)
+        
+        # Add a damped spring to keep the head mostly upright with more natural movement
+        # Lower stiffness (80) and slightly higher damping (25) for smoother motion
+        head_spring = pymunk.DampedRotarySpring(self.body, self.head, 0, 80, 25)
+        self.space.add(head_spring)
+        self.joints.append(head_spring)
 
         # --- Create Arms ---
         self.r_arm = self._create_part(limb_mass, arm_size, r_arm_pos)
@@ -104,7 +116,7 @@ class Dummy:
         self.joints.append(r_shoulder_joint)
         # Add motor
         r_shoulder_motor = pymunk.SimpleMotor(self.body, self.r_arm, 0) # Start rate 0
-        r_shoulder_motor.max_force = MOTOR_MAX_FORCE
+        r_shoulder_motor.max_force = MOTOR_MAX_FORCE  # Base arm power
         self.space.add(r_shoulder_motor)
         self.motors.append(r_shoulder_motor)
 
@@ -115,7 +127,7 @@ class Dummy:
         self.joints.append(l_shoulder_joint)
         # Add motor
         l_shoulder_motor = pymunk.SimpleMotor(self.body, self.l_arm, 0)
-        l_shoulder_motor.max_force = MOTOR_MAX_FORCE
+        l_shoulder_motor.max_force = MOTOR_MAX_FORCE  # Base arm power
         self.space.add(l_shoulder_motor)
         self.motors.append(l_shoulder_motor)
 
@@ -134,7 +146,7 @@ class Dummy:
         
         # Add hip motor
         r_hip_motor = pymunk.SimpleMotor(self.body, self.r_leg, 0)
-        r_hip_motor.max_force = MOTOR_MAX_FORCE
+        r_hip_motor.max_force = MOTOR_MAX_FORCE * 2.0  # Twice the power for legs
         self.space.add(r_hip_motor)
         self.motors.append(r_hip_motor)
 
@@ -151,7 +163,7 @@ class Dummy:
         
         # Add hip motor
         l_hip_motor = pymunk.SimpleMotor(self.body, self.l_leg, 0)
-        l_hip_motor.max_force = MOTOR_MAX_FORCE
+        l_hip_motor.max_force = MOTOR_MAX_FORCE * 2.0  # Twice the power for legs
         self.space.add(l_hip_motor)
         self.motors.append(l_hip_motor)
         
@@ -164,12 +176,12 @@ class Dummy:
         
         # Add knee motor
         r_knee_motor = pymunk.SimpleMotor(self.r_leg, self.r_lower_leg, 0)
-        r_knee_motor.max_force = MOTOR_MAX_FORCE * 0.8  # Slightly less force for knees
+        r_knee_motor.max_force = MOTOR_MAX_FORCE * 2.0 * 0.8  # Twice the power for legs, but still 0.8 factor for knees
         self.space.add(r_knee_motor)
         self.motors.append(r_knee_motor)
         
-        # Add knee angle limit (only bend forward)
-        r_knee_limit = pymunk.RotaryLimitJoint(self.r_leg, self.r_lower_leg, 0, math.pi/2)
+        # Add knee angle limit with expanded range (-90 to +90 degrees)
+        r_knee_limit = pymunk.RotaryLimitJoint(self.r_leg, self.r_lower_leg, -math.pi/2, math.pi/2)
         self.space.add(r_knee_limit)
         self.joints.append(r_knee_limit)
         
@@ -181,12 +193,12 @@ class Dummy:
         
         # Add knee motor
         l_knee_motor = pymunk.SimpleMotor(self.l_leg, self.l_lower_leg, 0)
-        l_knee_motor.max_force = MOTOR_MAX_FORCE * 0.8  # Slightly less force for knees
+        l_knee_motor.max_force = MOTOR_MAX_FORCE * 2.0 * 0.8  # Twice the power for legs, but still 0.8 factor for knees
         self.space.add(l_knee_motor)
         self.motors.append(l_knee_motor)
         
-        # Add knee angle limit (only bend forward)
-        l_knee_limit = pymunk.RotaryLimitJoint(self.l_leg, self.l_lower_leg, 0, math.pi/2)
+        # Add knee angle limit with expanded range (-90 to +90 degrees)
+        l_knee_limit = pymunk.RotaryLimitJoint(self.l_leg, self.l_lower_leg, -math.pi/2, math.pi/2)
         self.space.add(l_knee_limit)
         self.joints.append(l_knee_limit)
 
